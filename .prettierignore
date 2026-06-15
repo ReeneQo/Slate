@@ -1,0 +1,13 @@
+node_modules
+dist
+build
+out
+coverage
+pnpm-lock.yaml
+*.tsbuildinfo
+.claude
+
+# GitHub-шаблоны: ручные scaffold'ы с пустыми плейсхолдерами — точная
+# структура важна, Prettier не должен их переформатировать.
+.github/ISSUE_TEMPLATE/
+.github/PULL_REQUEST_TEMPLATE.md
