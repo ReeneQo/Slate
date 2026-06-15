@@ -1,0 +1,7 @@
+{
+  "name": "@slate/database",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Prisma schema + сгенерированный клиент. Заполняется на этапе 2.",
+  "scripts": {}
+}
