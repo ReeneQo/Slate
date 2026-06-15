@@ -1,0 +1,16 @@
+# Нормализация переносов строк на git-уровне (защита от CRLF на Windows/WSL).
+# Текст хранится в репозитории с LF; рабочая копия — тоже LF.
+* text=auto eol=lf
+
+# Бинарные файлы — git не трогает и не нормализует.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.woff  binary
+*.woff2 binary
+
+# Генерируемые файлы — сворачивать в диффах и не считать в статистике языков.
+pnpm-lock.yaml -diff linguist-generated
