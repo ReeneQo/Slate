@@ -41,3 +41,5 @@ packages/database/generated/
 
 # Claude Code — локальные настройки
 .claude/settings.local.json
+
+.turbo
