@@ -1,5 +1,7 @@
 import type { ReactElement } from 'react';
 
+import { CanvasStage } from '@/widgets/canvas';
+
 export function App(): ReactElement {
-  return <div className="app">Slate</div>;
+  return <CanvasStage />;
 }
