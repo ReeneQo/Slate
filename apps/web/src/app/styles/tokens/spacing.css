@@ -1,0 +1,27 @@
+/* Slate — Spacing & sizing tokens
+ * 4px base grid. Used for padding, gaps, margins. Control heights kept on a
+ * 4px rhythm so toolbars and forms align cleanly.
+ */
+:root {
+  --space-0: 0;
+  --space-1: 0.25rem; /* 4  */
+  --space-2: 0.5rem; /* 8  */
+  --space-3: 0.75rem; /* 12 */
+  --space-4: 1rem; /* 16 */
+  --space-5: 1.25rem; /* 20 */
+  --space-6: 1.5rem; /* 24 */
+  --space-8: 2rem; /* 32 */
+  --space-10: 2.5rem; /* 40 */
+  --space-12: 3rem; /* 48 */
+  --space-16: 4rem; /* 64 */
+  --space-20: 5rem; /* 80 */
+
+  /* Control heights (sm / md / lg) — buttons, inputs, selects */
+  --control-sm: 1.75rem; /* 28 — toolbar / compact */
+  --control-md: 2.25rem; /* 36 — default */
+  --control-lg: 2.75rem; /* 44 — primary CTAs, min touch target */
+
+  /* Layout */
+  --container: 72rem; /* 1152 marketing content width */
+  --panel-width: 17.5rem; /* 280 floating side panel */
+}

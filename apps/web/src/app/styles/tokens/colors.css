@@ -1,0 +1,163 @@
+/* Slate — Color tokens
+ * ---------------------------------------------------------------------------
+ * Two layers:
+ *   1. RAW SCALES  — fixed, theme-independent palette values (--slate-*, --clay-*…)
+ *   2. SEMANTIC ALIASES — what product code actually uses (--bg, --surface, --text-*…)
+ *      Light theme defaults live on :root. Dark theme remaps the SAME aliases
+ *      under [data-theme="dark"]. For auto-OS theming, mirror the OS
+ *      preference onto <html data-theme> from JS (see note at file end).
+ *
+ * Neutrals are slate-blue tinted (a quiet nod to the name) rather than pure gray.
+ * Accent is CLAY — a calm, warm terracotta that sets Slate apart from
+ * Excalidraw's violet without shouting.
+ */
+
+:root,
+[data-theme='light'],
+.light {
+  /* ----- RAW: Slate neutrals (cool, slightly blue-tinted) ----- */
+  --slate-0: #ffffff;
+  --slate-25: #f8f9fb;
+  --slate-50: #f1f3f6;
+  --slate-100: #e7eaef;
+  --slate-200: #d8dde4;
+  --slate-300: #c2c9d3;
+  --slate-400: #9aa3b0;
+  --slate-500: #727d8c;
+  --slate-600: #525c69;
+  --slate-700: #3b434e;
+  --slate-800: #272d36;
+  --slate-900: #1a1f26;
+  --slate-950: #12151a;
+
+  /* ----- RAW: Clay accent (warm terracotta) ----- */
+  --clay-50: #fbeee8;
+  --clay-100: #f6d8c9;
+  --clay-200: #ecb59c;
+  --clay-300: #df8f6d;
+  --clay-400: #d2744d;
+  --clay-500: #c2613d; /* brand accent — light theme */
+  --clay-600: #a84f30;
+  --clay-700: #8a4026;
+  --clay-800: #6d331f;
+
+  /* ----- RAW: Semantic hues ----- */
+  --red-50: #fbeae8;
+  --red-300: #ec9389;
+  --red-500: #d6453a; /* destructive — a cleaner, cooler red than clay */
+  --red-600: #bb392f;
+  --red-700: #97493f;
+
+  --green-50: #e8f4ed;
+  --green-500: #2f9e68;
+  --green-600: #268057;
+
+  --amber-50: #fbf1df;
+  --amber-500: #c98a1e;
+  --amber-600: #a8721a;
+
+  --blue-50: #e8f0fb;
+  --blue-500: #3b74c4; /* informational / links inside docs */
+  --blue-600: #2f5da0;
+
+  /* =====================  SEMANTIC ALIASES — LIGHT  ===================== */
+  /* Surfaces */
+  --bg: var(--slate-25); /* app background / canvas chrome */
+  --surface: var(--slate-0); /* panels, cards, menus */
+  --surface-raised: var(--slate-0); /* floating popovers (paired w/ shadow) */
+  --surface-sunken: var(--slate-50); /* wells, inset fields, hovered rows */
+  --surface-hover: var(--slate-50); /* hover wash on neutral surfaces */
+  --overlay: rgba(18, 21, 26, 0.42); /* modal scrim */
+
+  /* Borders */
+  --border: var(--slate-200);
+  --border-strong: var(--slate-300);
+  --border-subtle: var(--slate-100);
+
+  /* Text */
+  --text: var(--slate-900); /* primary */
+  --text-secondary: var(--slate-600); /* labels, secondary copy */
+  --text-muted: var(--slate-500); /* hints, placeholders, meta */
+  --text-on-accent: #ffffff;
+  --text-inverse: var(--slate-25);
+
+  /* Accent */
+  --accent: var(--clay-500);
+  --accent-hover: var(--clay-600);
+  --accent-active: var(--clay-700);
+  --accent-subtle: var(--clay-50); /* tinted fills, selected states */
+  --accent-border: var(--clay-200);
+  --accent-text: var(--clay-700); /* accent text on light surfaces (AA) */
+  --ring: color-mix(in srgb, var(--clay-500) 45%, transparent);
+
+  /* Destructive */
+  --danger: var(--red-500);
+  --danger-hover: var(--red-600);
+  --danger-subtle: var(--red-50);
+  --danger-border: var(--red-300);
+  --danger-text: var(--red-700);
+
+  /* Status */
+  --success: var(--green-500);
+  --success-subtle: var(--green-50);
+  --warning: var(--amber-500);
+  --warning-subtle: var(--amber-50);
+  --info: var(--blue-500);
+  --info-subtle: var(--blue-50);
+
+  /* Canvas dot-grid (signature whiteboard motif) */
+  --dot: var(--slate-200);
+  --canvas: var(--slate-25);
+  color-scheme: light;
+}
+
+/* =====================  SEMANTIC ALIASES — DARK  ===================== */
+:root[data-theme='dark'],
+[data-theme='dark'],
+.dark {
+  --bg: var(--slate-950);
+  --surface: var(--slate-900);
+  --surface-raised: var(--slate-800);
+  --surface-sunken: #0d1014;
+  --surface-hover: var(--slate-800);
+  --overlay: rgba(6, 8, 11, 0.62);
+
+  --border: var(--slate-800);
+  --border-strong: var(--slate-700);
+  --border-subtle: #1f242c;
+
+  --text: var(--slate-50);
+  --text-secondary: var(--slate-300);
+  --text-muted: var(--slate-400);
+  --text-on-accent: #1a1009;
+  --text-inverse: var(--slate-900);
+
+  --accent: var(--clay-400);
+  --accent-hover: var(--clay-300);
+  --accent-active: var(--clay-200);
+  --accent-subtle: color-mix(in srgb, var(--clay-500) 18%, var(--slate-900));
+  --accent-border: color-mix(in srgb, var(--clay-400) 40%, var(--slate-800));
+  --accent-text: var(--clay-300);
+  --ring: color-mix(in srgb, var(--clay-400) 55%, transparent);
+
+  --danger: #e5564b;
+  --danger-hover: #ef685e;
+  --danger-subtle: color-mix(in srgb, var(--red-500) 18%, var(--slate-900));
+  --danger-border: color-mix(in srgb, var(--red-500) 42%, var(--slate-800));
+  --danger-text: #f0998f;
+
+  --success: #45b97f;
+  --success-subtle: color-mix(in srgb, var(--green-500) 18%, var(--slate-900));
+  --warning: #e0a73a;
+  --warning-subtle: color-mix(in srgb, var(--amber-500) 18%, var(--slate-900));
+  --info: #5f93da;
+  --info-subtle: color-mix(in srgb, var(--blue-500) 20%, var(--slate-900));
+
+  --dot: var(--slate-700);
+  --canvas: var(--slate-950);
+  color-scheme: dark;
+}
+
+/* Auto-OS theming: set data-theme="dark" on <html> from JS, e.g.
+ *   matchMedia('(prefers-color-scheme: dark)') → document.documentElement.dataset.theme
+ * (kept out of CSS so every token resolves under a clean :root / [data-theme] scope). */

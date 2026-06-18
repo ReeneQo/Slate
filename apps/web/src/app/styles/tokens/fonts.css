@@ -1,0 +1,9 @@
+/* Slate — Webfonts
+ * Loaded from Google Fonts. See readme.md "Caveats": swap to self-hosted
+ * @font-face + binaries if you have license files.
+ *
+ * Bricolage Grotesque — display / logo / large headings (characterful grotesk)
+ * Hanken Grotesk      — UI + body (clean, slightly warm workhorse grotesk)
+ * JetBrains Mono      — mono: coordinates, dimensions, code, keyboard hints
+ */
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');

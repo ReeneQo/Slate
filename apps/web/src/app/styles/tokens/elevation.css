@@ -1,0 +1,35 @@
+/* Slate — Elevation, shadows & the canvas dot-grid
+ * Soft, low-contrast shadows. Floating whiteboard panels rely on elevation,
+ * so the system runs from a hairline rest state up to a lifted modal.
+ * Shadow values are theme-aware via the --shadow-color token.
+ */
+:root,
+[data-theme='light'],
+.light {
+  --shadow-color: 220 28% 22%; /* slate-blue, HSL channels */
+  --shadow-strength: 1;
+
+  --shadow-xs: 0 1px 2px hsl(var(--shadow-color) / calc(0.06 * var(--shadow-strength)));
+  --shadow-sm:
+    0 1px 2px hsl(var(--shadow-color) / calc(0.05 * var(--shadow-strength))),
+    0 2px 6px hsl(var(--shadow-color) / calc(0.06 * var(--shadow-strength)));
+  --shadow-md:
+    0 2px 4px hsl(var(--shadow-color) / calc(0.05 * var(--shadow-strength))),
+    0 6px 16px hsl(var(--shadow-color) / calc(0.1 * var(--shadow-strength)));
+  --shadow-lg:
+    0 4px 8px hsl(var(--shadow-color) / calc(0.06 * var(--shadow-strength))),
+    0 16px 32px hsl(var(--shadow-color) / calc(0.14 * var(--shadow-strength)));
+  --shadow-xl:
+    0 8px 16px hsl(var(--shadow-color) / calc(0.08 * var(--shadow-strength))),
+    0 28px 56px hsl(var(--shadow-color) / calc(0.2 * var(--shadow-strength)));
+
+  /* Focus ring (compose with box-shadow) */
+  --focus-ring: 0 0 0 3px var(--ring);
+}
+
+:root[data-theme='dark'],
+[data-theme='dark'],
+.dark {
+  --shadow-color: 220 50% 3%;
+  --shadow-strength: 1.6;
+}
