@@ -1,0 +1,14 @@
+/* Slate — Radius tokens
+ * Slate's corners are SOFT but never pill-shaped on content — a friendly,
+ * confident 10px default ("squircle-ish" feel). Pills are reserved for
+ * badges, avatars and toggles only.
+ */
+:root {
+  --radius-xs: 4px; /* tags, tiny chips, checkbox */
+  --radius-sm: 6px; /* compact controls, menu items */
+  --radius-md: 10px; /* DEFAULT — buttons, inputs, selects */
+  --radius-lg: 14px; /* cards, panels */
+  --radius-xl: 20px; /* dialogs, floating toolbars */
+  --radius-2xl: 28px; /* hero surfaces, large feature cards */
+  --radius-full: 999px; /* avatars, switches, badges, pills */
+}

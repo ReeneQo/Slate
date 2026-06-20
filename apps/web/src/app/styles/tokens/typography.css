@@ -1,0 +1,43 @@
+/* Slate — Typography tokens
+ * Families, fluid display sizes, a steady UI/body scale, weights, leading & tracking.
+ */
+:root {
+  /* Families */
+  --font-display: 'Bricolage Grotesque', 'Hanken Grotesk', system-ui, sans-serif;
+  --font-sans: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Weights */
+  --fw-regular: 400; /* @kind other */
+  --fw-medium: 500; /* @kind other */
+  --fw-semibold: 600; /* @kind other */
+  --fw-bold: 700; /* @kind other */
+  --fw-display: 800; /* @kind other */ /* wordmark / hero display */
+
+  /* Display scale — for marketing & big headings (fluid) */
+  --text-display-xl: clamp(2.75rem, 1.6rem + 4.8vw, 5rem); /* @kind spacing */
+  --text-display-lg: clamp(2.25rem, 1.5rem + 3.2vw, 3.5rem); /* @kind spacing */
+  --text-display-md: clamp(1.75rem, 1.3rem + 1.9vw, 2.5rem); /* @kind spacing */
+
+  /* UI / content scale (fixed px-rem, the product workhorse) */
+  --text-2xl: 1.5rem; /* 24 — section titles */
+  --text-xl: 1.25rem; /* 20 — card / dialog titles */
+  --text-lg: 1.0625rem; /* 17 — emphasised body */
+  --text-md: 0.9375rem; /* 15 — default body & controls */
+  --text-sm: 0.8125rem; /* 13 — secondary, labels */
+  --text-xs: 0.75rem; /* 12 — meta, badges, captions */
+  --text-2xs: 0.6875rem; /* 11 — overlines, keyboard hints */
+
+  /* Line heights */
+  --leading-tight: 1.12; /* display */
+  --leading-snug: 1.28; /* headings */
+  --leading-normal: 1.5; /* body */
+  --leading-relaxed: 1.65; /* long-form */
+
+  /* Letter spacing */
+  --tracking-tight: -0.02em; /* display & large headings */
+  --tracking-snug: -0.01em; /* titles */
+  --tracking-normal: 0em;
+  --tracking-wide: 0.04em; /* overlines / mono labels */
+  --tracking-caps: 0.08em; /* uppercase eyebrows */
+}
