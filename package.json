@@ -17,6 +17,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
     "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck"
   },
   "lint-staged": {
