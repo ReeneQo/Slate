@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import { Layer, Rect, Stage } from 'react-konva';
 
+import { useCanvasViewport } from '../lib/useCanvasViewport';
 import { useViewportSize } from '../lib/useViewportSize';
 
 const SAMPLE_SHAPE = {
@@ -14,10 +15,23 @@ const SHAPE_HEIGHT = 140;
 
 export function CanvasStage(): ReactElement {
   const { width, height } = useViewportSize();
+  const { transform, cursor, handlers } = useCanvasViewport();
 
   return (
-    <div className="fixed inset-0 bg-canvas">
-      <Stage width={width} height={height}>
+    <div className="fixed inset-0 bg-canvas" style={{ cursor }}>
+      <Stage
+        width={width}
+        height={height}
+        scaleX={transform.scale}
+        scaleY={transform.scale}
+        x={transform.x}
+        y={transform.y}
+        onWheel={handlers.onWheel}
+        onMouseDown={handlers.onMouseDown}
+        onMouseMove={handlers.onMouseMove}
+        onMouseUp={handlers.onMouseUp}
+        onMouseLeave={handlers.onMouseLeave}
+      >
         <Layer>
           <Rect
             x={width / 2 - SHAPE_WIDTH / 2}
