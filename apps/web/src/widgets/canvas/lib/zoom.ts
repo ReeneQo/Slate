@@ -1,18 +1,4 @@
-/**
- * Аффинная трансформация полотна: screen = world * scale + position.
- * Держим её плоским объектом — это персональное состояние вьюпорта,
- * которое целиком отдаётся в <Stage> (scaleX/scaleY + x/y).
- */
-export interface ViewportTransform {
-  scale: number;
-  x: number;
-  y: number;
-}
-
-export interface Point {
-  x: number;
-  y: number;
-}
+import type { Point, Viewport } from '@/shared/lib/viewport';
 
 /** Границы масштаба. min/max подбираются по ощущению. */
 export const ZOOM_MIN = 0.1;
@@ -30,7 +16,7 @@ export const ZOOM_PINCH_SENSITIVITY = 0.01;
 
 export interface ZoomToPointArgs {
   /** Текущая трансформация полотна. */
-  transform: ViewportTransform;
+  viewport: Viewport;
   /** Точка курсора в экранных координатах (относительно Stage). */
   pointer: Point;
   /** Множитель к текущему scale: >1 приблизить, <1 отдалить. */
@@ -73,13 +59,13 @@ export function wheelToZoomFactor(deltaY: number, isPinch: boolean): number {
  * точка привязки «поплывёт».
  */
 export function zoomToPoint({
-  transform,
+  viewport,
   pointer,
   factor,
   min = ZOOM_MIN,
   max = ZOOM_MAX,
-}: ZoomToPointArgs): ViewportTransform {
-  const { scale, x, y } = transform;
+}: ZoomToPointArgs): Viewport {
+  const { scale, x, y } = viewport;
 
   const worldX = (pointer.x - x) / scale;
   const worldY = (pointer.y - y) / scale;

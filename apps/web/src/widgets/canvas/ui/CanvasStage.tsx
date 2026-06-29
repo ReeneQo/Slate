@@ -1,54 +1,57 @@
 import type { ReactElement } from 'react';
-import { Layer, Rect, Stage } from 'react-konva';
+import { Layer, Stage } from 'react-konva';
+import { useShallow } from 'zustand/react/shallow';
 
-import { useCanvasViewport } from '../lib/useCanvasViewport';
+import { useDocumentStore } from '@/entities/canvas-element';
+import { Toolbar } from '@/features/toolbar';
+
+import { useCanvasInteraction } from '../lib/useCanvasInteraction';
 import { useViewportSize } from '../lib/useViewportSize';
+import { useEditorStore } from '../model/editor.store';
+import { ElementShape } from './ElementShape';
+import { ShapeRenderer } from './ShapeRenderer';
 
-const SAMPLE_SHAPE = {
-  fill: '#ffffff',
-  stroke: '#c2613d',
-  shadow: 'rgba(39, 45, 54, 0.18)',
-} as const;
-
-const SHAPE_WIDTH = 220;
-const SHAPE_HEIGHT = 140;
-
+/**
+ * Холст-шелл: связывает Konva Stage со сторами. Рендерит фигуры ИЗ document-стора
+ * (стор — источник правды, Konva отражает его, не наоборот) и накладывает превью
+ * текущего черновика поверх.
+ *
+ * Подписки точечные:
+ *  - elementIds (shallow) — список перерисовывается только при добавлении/удалении
+ *    фигуры или смене порядка, а не при правке одной фигуры;
+ *  - сам элемент тащит уже ShapeRenderer по своему id.
+ */
 export function CanvasStage(): ReactElement {
   const { width, height } = useViewportSize();
-  const { transform, cursor, handlers } = useCanvasViewport();
+  const { cursor, handlers } = useCanvasInteraction();
+
+  const viewport = useEditorStore((state) => state.viewport);
+  const draft = useEditorStore((state) => state.draft);
+  const selectedTool = useEditorStore((state) => state.selectedTool);
+  const setTool = useEditorStore((state) => state.setTool);
+  const elementIds = useDocumentStore(useShallow((state) => state.elementIds));
 
   return (
-    <div className="fixed inset-0 bg-canvas" style={{ cursor }}>
-      <Stage
-        width={width}
-        height={height}
-        scaleX={transform.scale}
-        scaleY={transform.scale}
-        x={transform.x}
-        y={transform.y}
-        onWheel={handlers.onWheel}
-        onMouseDown={handlers.onMouseDown}
-        onMouseMove={handlers.onMouseMove}
-        onMouseUp={handlers.onMouseUp}
-        onMouseLeave={handlers.onMouseLeave}
-      >
-        <Layer>
-          <Rect
-            x={width / 2 - SHAPE_WIDTH / 2}
-            y={height / 2 - SHAPE_HEIGHT / 2}
-            width={SHAPE_WIDTH}
-            height={SHAPE_HEIGHT}
-            cornerRadius={14}
-            fill={SAMPLE_SHAPE.fill}
-            stroke={SAMPLE_SHAPE.stroke}
-            strokeWidth={2}
-            shadowColor={SAMPLE_SHAPE.shadow}
-            shadowBlur={24}
-            shadowOffsetY={8}
-            shadowOpacity={1}
-          />
-        </Layer>
-      </Stage>
-    </div>
+    <>
+      <div className="fixed inset-0 bg-canvas" style={{ cursor }}>
+        <Stage
+          width={width}
+          height={height}
+          scaleX={viewport.scale}
+          scaleY={viewport.scale}
+          x={viewport.x}
+          y={viewport.y}
+          {...handlers}
+        >
+          <Layer>
+            {elementIds.map((id) => (
+              <ShapeRenderer key={id} id={id} />
+            ))}
+            {draft && <ElementShape element={draft} />}
+          </Layer>
+        </Stage>
+      </div>
+      <Toolbar selectedTool={selectedTool} onSelectTool={setTool} />
+    </>
   );
 }
