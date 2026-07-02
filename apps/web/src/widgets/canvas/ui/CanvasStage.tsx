@@ -53,12 +53,7 @@ export function CanvasStage(): ReactElement {
     return callback;
   }, []);
 
-  // Доступ к Konva-узлу по id для оркестратора: он программно стартует drag
-  // (node.startDrag()) по тому же ручному hit-тесту, что рисует курсор — так drag
-  // срабатывает ровно там, где показан курсор «move», а не по точечному hit Konva.
-  const getNode = useCallback((id: string): Node | null => nodeMap.current.get(id) ?? null, []);
-
-  const { cursor, handlers } = useCanvasInteraction({ getNode });
+  const { cursor, handlers, isPanMode } = useCanvasInteraction();
   // Клавиатурный ввод холста (Delete/Backspace → удаление выделения). Отдельный
   // window-listener, поэтому Stage-фокус не нужен.
   useCanvasHotkeys();
@@ -69,6 +64,11 @@ export function CanvasStage(): ReactElement {
   const setTool = useEditorStore((state) => state.setTool);
   const selectedElementIds = useEditorStore(useShallow((state) => state.selectedElementIds));
   const elementIds = useDocumentStore(useShallow((state) => state.elementIds));
+
+  // Фигуры таскаются нативным Konva draggable, но только в select-режиме и вне pan:
+  // при рисовании узел не должен ловить drag (иначе не нарисовать поверх), в pan —
+  // ехать должно полотно, а не фигура.
+  const shapesDraggable = selectedTool === 'select' && !isPanMode;
 
   // Привязываем Transformer к выделенным узлам. Он слушает их drag и рисует рамку,
   // следуя за фигурой во время переноса — поэтому индикатор не отстаёт, хотя стор
@@ -100,7 +100,12 @@ export function CanvasStage(): ReactElement {
         >
           <Layer>
             {elementIds.map((id) => (
-              <ShapeRenderer key={id} id={id} shapeRef={registerNode(id)} />
+              <ShapeRenderer
+                key={id}
+                id={id}
+                shapeRef={registerNode(id)}
+                draggable={shapesDraggable}
+              />
             ))}
             {draft && <ElementShape element={draft} />}
             {/* Только рамка: ресайз/поворот/ручки выключены (этап 1 их не делает). */}

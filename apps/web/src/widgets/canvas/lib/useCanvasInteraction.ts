@@ -1,4 +1,4 @@
-import type { KonvaEventObject, Node } from 'konva/lib/Node';
+import type { KonvaEventObject } from 'konva/lib/Node';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { isEditableTarget } from '@/shared/lib/dom';
@@ -29,11 +29,11 @@ export interface CanvasInteractionHandlers {
 export interface CanvasInteraction {
   cursor: CanvasCursor;
   handlers: CanvasInteractionHandlers;
-}
-
-export interface CanvasInteractionOptions {
-  /** Доступ к Konva-узлу по id — оркестратор программно стартует его drag. */
-  getNode: (id: string) => Node | null;
+  /**
+   * Активен ли pan-режим (зажат пробел или идёт панорама). Наружу — чтобы холст
+   * отключал draggable узлов в pan (иначе тащилась бы фигура вместо полотна).
+   */
+  isPanMode: boolean;
 }
 
 /**
@@ -45,15 +45,17 @@ export interface CanvasInteractionOptions {
  * Маршрутизация в одном месте, чтобы жесты не конфликтовали: pan имеет приоритет
  * над рисованием (зажат пробел — тащим полотно, не рисуем).
  *
- * Drag фигуры стартуем программно (node.startDrag()) по ручному hit-тесту, а не
- * через нативный draggable Konva. Причина: hit-тест у нас щедрый (с паддингом, и
- * тем же, что рисует курсор «move»), а точечный hit узла Konva — нет. Единая
- * система попадания = drag срабатывает везде, где показан курсор перетаскивания.
+ * Drag фигуры ведёт НАТИВНЫЙ Konva draggable на самом узле (см. ElementShape), а не
+ * программный startDrag отсюда: Konva сама разводит клик от перетаскивания по
+ * встроенному порогу смещения, поэтому клик только выделяет, а тащит лишь
+ * удержание+движение. Здесь select-ветка onMouseDown лишь выделяет (selectAt).
+ * draggable включаем только в select-режиме вне pan — этот признак отдаём наружу
+ * (isPanMode), CanvasStage считает по нему draggable узлов.
  *
  * Вьюпорт читаем/пишем через стор (а не локальный useState): он нужен и рисованию
  * для screen→canvas, поэтому это общее состояние редактора.
  */
-export function useCanvasInteraction({ getNode }: CanvasInteractionOptions): CanvasInteraction {
+export function useCanvasInteraction(): CanvasInteraction {
   const drawing = useDrawing();
   const { selectAt, findAt } = useSelection();
   const setViewport = useEditorStore((state) => state.setViewport);
@@ -126,19 +128,18 @@ export function useCanvasInteraction({ getNode }: CanvasInteractionOptions): Can
 
       if (button !== LEFT_BUTTON) return;
 
-      // Select-режим: клик = выделение, и сразу программно стартуем drag узла по
-      // тому же hit-тесту. startDrag берёт offset из текущего указателя (mousedown
-      // его уже выставил), поэтому фигура не прыгает; дальше DND ведёт Konva, а
-      // позицию в стор коммитит onDragEnd. Пустой клик (null) — просто снятие.
+      // Select-режим: клик ТОЛЬКО выделяет. Сам drag ведёт нативный draggable узла
+      // (Konva разводит клик от перетаскивания порогом смещения) — программный
+      // startDrag убран, из-за него фигура липла к курсору без удержания кнопки.
+      // Позицию в стор коммитит onDragEnd. Пустой клик (null) — снятие выделения.
       if (selectedTool === 'select') {
-        const hitId = selectAt(pointer);
-        if (hitId) getNode(hitId)?.startDrag();
+        selectAt(pointer);
         return;
       }
 
       drawing.start(pointer);
     },
-    [isSpacePressed, selectedTool, selectAt, getNode, drawing],
+    [isSpacePressed, selectedTool, selectAt, drawing],
   );
 
   const onMouseMove = useCallback(
@@ -195,8 +196,13 @@ export function useCanvasInteraction({ getNode }: CanvasInteractionOptions): Can
           ? 'move'
           : 'default';
 
+  // Pan-намерение: зажат пробел (готовность тащить полотно) или уже идёт панорама.
+  // По нему холст гасит draggable фигур, чтобы в pan ехало полотно, а не фигура.
+  const isPanMode = isSpacePressed || isPanning;
+
   return {
     cursor,
+    isPanMode,
     handlers: {
       onWheel,
       onMouseDown,

@@ -8,8 +8,10 @@ import type { Point } from '@/shared/lib/viewport';
 interface ElementShapeProps {
   /** Закоммиченный элемент или черновик-превью — рендерятся одинаково. */
   element: CanvasElement | DraftElement;
-  /** Регистрация Konva-узла у родителя — нужна Transformer'у и программному drag. */
+  /** Регистрация Konva-узла у родителя — нужна Transformer'у (индикатор выделения). */
   shapeRef?: (node: Node | null) => void;
+  /** Нативный Konva draggable. У превью-черновика не задаём — его не таскают. */
+  draggable?: boolean;
   /** Коммит новой позиции в стор. Отдаём УЖЕ в координатах модели (x/y = угол рамки). */
   onDragEnd?: (position: Point) => void;
 }
@@ -37,6 +39,7 @@ function nodePositionToModel(element: ElementShapeProps['element'], node: Node):
 export function ElementShape({
   element,
   shapeRef,
+  draggable,
   onDragEnd,
 }: ElementShapeProps): ReactElement | null {
   // Источник правды о позиции — стор. Синхронизируем ТОЛЬКО на завершение drag
@@ -52,6 +55,7 @@ export function ElementShape({
     strokeWidth: element.strokeWidth,
     opacity: element.opacity,
     rotation: element.angle,
+    draggable,
     onDragEnd: handleDragEnd,
   };
 
