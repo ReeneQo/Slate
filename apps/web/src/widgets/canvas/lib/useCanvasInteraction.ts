@@ -24,6 +24,9 @@ export interface CanvasInteractionHandlers {
   onMouseMove: (e: KonvaEventObject<MouseEvent>) => void;
   onMouseUp: (e: KonvaEventObject<MouseEvent>) => void;
   onMouseLeave: (e: KonvaEventObject<MouseEvent>) => void;
+  // Всплывают со Stage при нативном drag узла-фигуры (Stage сам не draggable).
+  onDragStart: (e: KonvaEventObject<DragEvent>) => void;
+  onDragEnd: (e: KonvaEventObject<DragEvent>) => void;
 }
 
 export interface CanvasInteraction {
@@ -65,6 +68,10 @@ export function useCanvasInteraction(): CanvasInteraction {
   const [isPanning, setIsPanning] = useState(false);
   // Наведён ли курсор на фигуру в select-режиме — для курсора «move».
   const [isHoveringShape, setIsHoveringShape] = useState(false);
+  // Идёт ли нативный drag фигуры — чтобы держать курсор «move» весь жест, а не
+  // только в момент захвата (findAt смотрит на позиции в сторе, а они меняются
+  // лишь на onDragEnd, поэтому по ходу драга hover-курсор бы слетал).
+  const [isDraggingShape, setIsDraggingShape] = useState(false);
 
   // Последняя позиция указателя (экранные координаты) — для расчёта delta при pan.
   // Ref, а не state: меняется на каждый mousemove и не должен триггерить рендер.
@@ -186,15 +193,22 @@ export function useCanvasInteraction(): CanvasInteraction {
     setIsHoveringShape(false);
   }, [endInteraction]);
 
+  // Drag узла-фигуры (нативный Konva) всплывает до Stage — держим по нему «move»
+  // на весь жест, независимо от hover-теста.
+  const onDragStart = useCallback((): void => setIsDraggingShape(true), []);
+  const onDragEnd = useCallback((): void => setIsDraggingShape(false), []);
+
   const cursor: CanvasCursor = isPanning
     ? 'grabbing'
-    : isSpacePressed
-      ? 'grab'
-      : selectedTool !== 'select'
-        ? 'crosshair'
-        : isHoveringShape
-          ? 'move'
-          : 'default';
+    : isDraggingShape
+      ? 'move' // тащим фигуру — «move» весь жест, приоритетнее hover/пробела
+      : isSpacePressed
+        ? 'grab'
+        : selectedTool !== 'select'
+          ? 'crosshair'
+          : isHoveringShape
+            ? 'move'
+            : 'default';
 
   // Pan-намерение: зажат пробел (готовность тащить полотно) или уже идёт панорама.
   // По нему холст гасит draggable фигур, чтобы в pan ехало полотно, а не фигура.
@@ -209,6 +223,8 @@ export function useCanvasInteraction(): CanvasInteraction {
       onMouseMove,
       onMouseUp: endInteraction,
       onMouseLeave,
+      onDragStart,
+      onDragEnd,
     },
   };
 }
