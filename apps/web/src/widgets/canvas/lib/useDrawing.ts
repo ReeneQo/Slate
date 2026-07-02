@@ -32,6 +32,7 @@ export interface DrawingController {
 
 export function useDrawing(): DrawingController {
   const setDraft = useEditorStore((state) => state.setDraft);
+  const setTool = useEditorStore((state) => state.setTool);
   const commitElement = useDocumentStore((state) => state.commitElement);
 
   const start = useCallback(
@@ -61,9 +62,14 @@ export function useDrawing(): DrawingController {
     const { draft } = useEditorStore.getState();
     if (!draft) return;
 
-    if (isCommittable(draft)) commitElement(draft);
+    if (isCommittable(draft)) {
+      commitElement(draft);
+      // После нарисованной фигуры возвращаемся к выделению — дефолт этапа 1.
+      // Lock-тумблер (оставить инструмент активным, как в Excalidraw) — отдельная задача.
+      setTool('select');
+    }
     setDraft(null);
-  }, [commitElement, setDraft]);
+  }, [commitElement, setDraft, setTool]);
 
   return { start, move, end };
 }
