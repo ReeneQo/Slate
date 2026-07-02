@@ -1,17 +1,18 @@
-import type { KonvaEventObject } from 'konva/lib/Node';
+import type { KonvaEventObject, Node } from 'konva/lib/Node';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { Point } from '@/shared/lib/viewport';
 
 import { useEditorStore } from '../model/editor.store';
 import { useDrawing } from './useDrawing';
+import { useSelection } from './useSelection';
 import { wheelToZoomFactor, zoomToPoint } from './zoom';
 
 /** Кнопки мыши в нативном MouseEvent.button. */
 const LEFT_BUTTON = 0;
 const MIDDLE_BUTTON = 1;
 
-export type CanvasCursor = 'default' | 'grab' | 'grabbing' | 'crosshair';
+export type CanvasCursor = 'default' | 'grab' | 'grabbing' | 'crosshair' | 'move';
 
 export interface CanvasInteractionHandlers {
   onWheel: (e: KonvaEventObject<WheelEvent>) => void;
@@ -24,6 +25,11 @@ export interface CanvasInteractionHandlers {
 export interface CanvasInteraction {
   cursor: CanvasCursor;
   handlers: CanvasInteractionHandlers;
+}
+
+export interface CanvasInteractionOptions {
+  /** Доступ к Konva-узлу по id — оркестратор программно стартует его drag. */
+  getNode: (id: string) => Node | null;
 }
 
 /** Не перехватываем пробел, когда фокус в поле ввода (задел на будущее). */
@@ -42,16 +48,24 @@ function isEditableTarget(target: EventTarget | null): boolean {
  * Маршрутизация в одном месте, чтобы жесты не конфликтовали: pan имеет приоритет
  * над рисованием (зажат пробел — тащим полотно, не рисуем).
  *
+ * Drag фигуры стартуем программно (node.startDrag()) по ручному hit-тесту, а не
+ * через нативный draggable Konva. Причина: hit-тест у нас щедрый (с паддингом, и
+ * тем же, что рисует курсор «move»), а точечный hit узла Konva — нет. Единая
+ * система попадания = drag срабатывает везде, где показан курсор перетаскивания.
+ *
  * Вьюпорт читаем/пишем через стор (а не локальный useState): он нужен и рисованию
  * для screen→canvas, поэтому это общее состояние редактора.
  */
-export function useCanvasInteraction(): CanvasInteraction {
+export function useCanvasInteraction({ getNode }: CanvasInteractionOptions): CanvasInteraction {
   const drawing = useDrawing();
+  const { selectAt, findAt } = useSelection();
   const setViewport = useEditorStore((state) => state.setViewport);
   const selectedTool = useEditorStore((state) => state.selectedTool);
 
   const [isSpacePressed, setIsSpacePressed] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
+  // Наведён ли курсор на фигуру в select-режиме — для курсора «move».
+  const [isHoveringShape, setIsHoveringShape] = useState(false);
 
   // Последняя позиция указателя (экранные координаты) — для расчёта delta при pan.
   // Ref, а не state: меняется на каждый mousemove и не должен триггерить рендер.
@@ -113,9 +127,21 @@ export function useCanvasInteraction(): CanvasInteraction {
         return; // pan приоритетнее рисования
       }
 
-      if (button === LEFT_BUTTON) drawing.start(pointer);
+      if (button !== LEFT_BUTTON) return;
+
+      // Select-режим: клик = выделение, и сразу программно стартуем drag узла по
+      // тому же hit-тесту. startDrag берёт offset из текущего указателя (mousedown
+      // его уже выставил), поэтому фигура не прыгает; дальше DND ведёт Konva, а
+      // позицию в стор коммитит onDragEnd. Пустой клик (null) — просто снятие.
+      if (selectedTool === 'select') {
+        const hitId = selectAt(pointer);
+        if (hitId) getNode(hitId)?.startDrag();
+        return;
+      }
+
+      drawing.start(pointer);
     },
-    [isSpacePressed, drawing],
+    [isSpacePressed, selectedTool, selectAt, getNode, drawing],
   );
 
   const onMouseMove = useCallback(
@@ -135,9 +161,17 @@ export function useCanvasInteraction(): CanvasInteraction {
         return;
       }
 
+      // Select-режим: подсвечиваем курсором фигуру под указателем (её можно тащить).
+      // findAt дёшев (O(n) на кадр без hit-canvas), а setState тем же значением
+      // React гасит без ре-рендера — курсор меняется только на границе фигуры.
+      if (selectedTool === 'select') {
+        setIsHoveringShape(findAt(pointer) !== null);
+        return;
+      }
+
       drawing.move(pointer);
     },
-    [isPanning, drawing, setViewport],
+    [isPanning, selectedTool, findAt, drawing, setViewport],
   );
 
   const endInteraction = useCallback((): void => {
@@ -148,13 +182,21 @@ export function useCanvasInteraction(): CanvasInteraction {
     drawing.end();
   }, [isPanning, drawing]);
 
+  // Уводя курсор со Stage, завершаем жест И гасим hover — иначе «move» залипнет.
+  const onMouseLeave = useCallback((): void => {
+    endInteraction();
+    setIsHoveringShape(false);
+  }, [endInteraction]);
+
   const cursor: CanvasCursor = isPanning
     ? 'grabbing'
     : isSpacePressed
       ? 'grab'
       : selectedTool !== 'select'
         ? 'crosshair'
-        : 'default';
+        : isHoveringShape
+          ? 'move'
+          : 'default';
 
   return {
     cursor,
@@ -163,7 +205,7 @@ export function useCanvasInteraction(): CanvasInteraction {
       onMouseDown,
       onMouseMove,
       onMouseUp: endInteraction,
-      onMouseLeave: endInteraction,
+      onMouseLeave,
     },
   };
 }
