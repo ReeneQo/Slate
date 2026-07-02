@@ -9,8 +9,11 @@ import { useEditorStore } from '../model/editor.store';
  * Слабина попадания в экранных пикселях. Делим на scale, чтобы «зона клика»
  * вокруг фигуры на холсте оставалась постоянной по ощущению при любом зуме.
  * Побольше — чтобы по тонким фигурам (линии) было проще попасть.
+ *
+ * Экспортируется как единый источник: тот же паддинг задаёт hitStrokeWidth узлов
+ * (ElementShape), чтобы зона ЗАХВАТА нативного drag совпадала с зоной КУРСОРА.
  */
-const HIT_PADDING_PX = 8;
+export const HIT_PADDING_PX = 8;
 
 export interface SelectionController {
   /**

@@ -5,11 +5,17 @@ import { Ellipse, Line, Rect } from 'react-konva';
 import type { CanvasElement, DraftElement } from '@/entities/canvas-element';
 import type { Point } from '@/shared/lib/viewport';
 
+import { HIT_PADDING_PX } from '../lib/useSelection';
+
 interface ElementShapeProps {
   /** Закоммиченный элемент или черновик-превью — рендерятся одинаково. */
   element: CanvasElement | DraftElement;
-  /** Регистрация Konva-узла у родителя — нужна Transformer'у и программному drag. */
+  /** Регистрация Konva-узла у родителя — нужна Transformer'у (индикатор выделения). */
   shapeRef?: (node: Node | null) => void;
+  /** Нативный Konva draggable. У превью-черновика не задаём — его не таскают. */
+  draggable?: boolean;
+  /** Текущий зум — чтобы зона захвата держала постоянную ширину в экранных px. */
+  scale: number;
   /** Коммит новой позиции в стор. Отдаём УЖЕ в координатах модели (x/y = угол рамки). */
   onDragEnd?: (position: Point) => void;
 }
@@ -37,6 +43,8 @@ function nodePositionToModel(element: ElementShapeProps['element'], node: Node):
 export function ElementShape({
   element,
   shapeRef,
+  draggable,
+  scale,
   onDragEnd,
 }: ElementShapeProps): ReactElement | null {
   // Источник правды о позиции — стор. Синхронизируем ТОЛЬКО на завершение drag
@@ -47,11 +55,24 @@ export function ElementShape({
         onDragEnd(nodePositionToModel(element, event.target))
     : undefined;
 
+  // Зона ЗАХВАТА нативного drag должна совпадать с зоной КУРСОРА «move» — её рисует
+  // ручной hitTestElement с tolerance = HIT_PADDING_PX/scale. hitStrokeWidth задаёт
+  // ПОЛНУЮ ширину hit-штриха (полоса hitStrokeWidth/2 в каждую сторону), поэтому
+  // берём удвоенный tolerance. Для линии hitTestElement добавляет ещё strokeWidth/2
+  // (порог = tolerance + strokeWidth/2) — добавляем и здесь, иначе на линии остаётся
+  // ровно один неберущийся пиксель. Делим на scale: полоса держит постоянную ширину
+  // в экранных px при любом зуме — как и курсор.
+  const tolerance = HIT_PADDING_PX / scale;
+  const hitStrokeWidth =
+    element.type === 'line' ? 2 * tolerance + element.strokeWidth : 2 * tolerance;
+
   const common = {
     stroke: element.stroke,
     strokeWidth: element.strokeWidth,
     opacity: element.opacity,
     rotation: element.angle,
+    hitStrokeWidth,
+    draggable,
     onDragEnd: handleDragEnd,
   };
 
