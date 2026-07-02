@@ -1,6 +1,7 @@
 import type { KonvaEventObject, Node } from 'konva/lib/Node';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { isEditableTarget } from '@/shared/lib/dom';
 import type { Point } from '@/shared/lib/viewport';
 
 import { useEditorStore } from '../model/editor.store';
@@ -13,6 +14,9 @@ const LEFT_BUTTON = 0;
 const MIDDLE_BUTTON = 1;
 
 export type CanvasCursor = 'default' | 'grab' | 'grabbing' | 'crosshair' | 'move';
+
+// isEditableTarget вынесен в @/shared/lib/dom — общий guard для всех
+// клавиатурных обработчиков холста (пробел здесь, Delete в useCanvasHotkeys).
 
 export interface CanvasInteractionHandlers {
   onWheel: (e: KonvaEventObject<WheelEvent>) => void;
@@ -30,13 +34,6 @@ export interface CanvasInteraction {
 export interface CanvasInteractionOptions {
   /** Доступ к Konva-узлу по id — оркестратор программно стартует его drag. */
   getNode: (id: string) => Node | null;
-}
-
-/** Не перехватываем пробел, когда фокус в поле ввода (задел на будущее). */
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable;
 }
 
 /**

@@ -55,13 +55,35 @@ describe('useDocumentStore', () => {
     expect(useDocumentStore.getState().elements[id]?.x).toBe(999);
   });
 
-  it('removeElement удаляет из elements и elementIds синхронно', () => {
+  it('deleteElements удаляет один id из elements и elementIds синхронно', () => {
     const id = commit();
 
-    useDocumentStore.getState().removeElement(id);
+    useDocumentStore.getState().deleteElements([id]);
     const { elements, elementIds } = useDocumentStore.getState();
     expect(elementIds).not.toContain(id);
     expect(elements[id]).toBeUndefined();
+  });
+
+  it('deleteElements удаляет несколько id разом, не трогая остальные', () => {
+    const first = commit();
+    const second = commit();
+    const third = commit();
+
+    useDocumentStore.getState().deleteElements([first, third]);
+    const { elements, elementIds } = useDocumentStore.getState();
+    expect(elementIds).toEqual([second]);
+    expect(elements[first]).toBeUndefined();
+    expect(elements[third]).toBeUndefined();
+    expect(elements[second]?.id).toBe(second);
+  });
+
+  it('deleteElements с пустым массивом — no-op', () => {
+    commit();
+    const before = useDocumentStore.getState().elementIds;
+
+    useDocumentStore.getState().deleteElements([]);
+    // Ссылка на массив не меняется — set фактически не тронул стор.
+    expect(useDocumentStore.getState().elementIds).toBe(before);
   });
 
   it('держит порядок добавления в elementIds (будущий z-index)', () => {
