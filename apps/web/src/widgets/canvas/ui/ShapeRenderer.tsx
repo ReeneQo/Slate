@@ -11,6 +11,8 @@ interface ShapeRendererProps {
   shapeRef: (node: Node | null) => void;
   /** Можно ли тащить фигуру (нативный Konva draggable). Считает CanvasStage. */
   draggable: boolean;
+  /** Текущий зум — для scale-зависимой ширины зоны захвата (см. ElementShape). */
+  scale: number;
 }
 
 /**
@@ -23,6 +25,7 @@ export function ShapeRenderer({
   id,
   shapeRef,
   draggable,
+  scale,
 }: ShapeRendererProps): ReactElement | null {
   const element = useDocumentStore((state) => state.elements[id]);
   const updateElement = useDocumentStore((state) => state.updateElement);
@@ -33,6 +36,7 @@ export function ShapeRenderer({
       element={element}
       shapeRef={shapeRef}
       draggable={draggable}
+      scale={scale}
       // Координаты относительные — при переносе меняются только x/y, геометрия та же.
       onDragEnd={(position) => updateElement(id, position)}
     />

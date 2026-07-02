@@ -105,9 +105,10 @@ export function CanvasStage(): ReactElement {
                 id={id}
                 shapeRef={registerNode(id)}
                 draggable={shapesDraggable}
+                scale={viewport.scale}
               />
             ))}
-            {draft && <ElementShape element={draft} />}
+            {draft && <ElementShape element={draft} scale={viewport.scale} />}
             {/* Только рамка: ресайз/поворот/ручки выключены (этап 1 их не делает). */}
             <Transformer
               ref={transformerRef}
