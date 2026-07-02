@@ -47,6 +47,9 @@ export const useEditorStore = create<EditorStore>()(
         state.selectedTool = tool;
         // Смена инструмента отменяет незакоммиченный черновик.
         state.draft = null;
+        // Выделение — концепт select-режима. Уходя на инструмент рисования,
+        // снимаем его, иначе рамка Transformer «зависнет» поверх рисования.
+        if (tool !== 'select') state.selectedElementIds = [];
       }),
 
     setDraft: (draft) =>
