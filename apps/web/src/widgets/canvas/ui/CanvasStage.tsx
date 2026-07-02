@@ -7,6 +7,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useDocumentStore } from '@/entities/canvas-element';
 import { Toolbar } from '@/features/toolbar';
 
+import { useCanvasHotkeys } from '../lib/useCanvasHotkeys';
 import { useCanvasInteraction } from '../lib/useCanvasInteraction';
 import { useViewportSize } from '../lib/useViewportSize';
 import { useEditorStore } from '../model/editor.store';
@@ -58,6 +59,9 @@ export function CanvasStage(): ReactElement {
   const getNode = useCallback((id: string): Node | null => nodeMap.current.get(id) ?? null, []);
 
   const { cursor, handlers } = useCanvasInteraction({ getNode });
+  // Клавиатурный ввод холста (Delete/Backspace → удаление выделения). Отдельный
+  // window-listener, поэтому Stage-фокус не нужен.
+  useCanvasHotkeys();
 
   const viewport = useEditorStore((state) => state.viewport);
   const draft = useEditorStore((state) => state.draft);

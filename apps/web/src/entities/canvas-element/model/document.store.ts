@@ -21,7 +21,14 @@ interface DocumentActions {
   /** Переносит черновик в документ: нормализует, генерит id, добавляет в z-order. */
   commitElement: (draft: DraftElement) => void;
   updateElement: (id: string, patch: ElementPatch) => void;
-  removeElement: (id: string) => void;
+  /**
+   * Единственный путь удаления. Убирает пачку элементов разом: вычищает их из
+   * elements и из elementIds одним атомарным set. «Удалить один» — это
+   * deleteElements([id]), отдельного removeElement нет намеренно (один способ
+   * удаления = нет рассинхрона). Коммитящая операция — в ряду commitElement/
+   * updateElement, под будущий undo/redo.
+   */
+  deleteElements: (ids: string[]) => void;
   /** Сброс документа (новая доска / тесты). */
   reset: () => void;
 }
@@ -65,11 +72,15 @@ export const useDocumentStore = create<DocumentStore>()(
         Object.assign(element, patch);
       }),
 
-    removeElement: (id) =>
+    deleteElements: (ids) =>
       set((state) => {
-        if (!state.elements[id]) return;
-        delete state.elements[id];
-        state.elementIds = state.elementIds.filter((elementId) => elementId !== id);
+        if (ids.length === 0) return; // пустой ввод — не дёргаем подписчиков впустую
+        // Set для O(1) проверки принадлежности: filter по elementIds становится
+        // O(n), а не O(n·m). Оба контейнера правим в одном set — между кадрами
+        // нет висячего id (рендер достал бы undefined) и Transformer на мёртвом узле.
+        const toDelete = new Set(ids);
+        for (const id of toDelete) delete state.elements[id];
+        state.elementIds = state.elementIds.filter((id) => !toDelete.has(id));
       }),
 
     reset: () =>
