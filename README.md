@@ -37,14 +37,28 @@ slate/
 pnpm install
 ```
 
+## Локальное окружение (Docker)
+
+Требует Docker. Поднимает Postgres (хост-порт `5434`) и Redis (хост-порт `6381`).
+
+```bash
+cp .env.example .env   # рабочий конфиг из коробки, править не нужно
+pnpm infra:up          # up -d --wait: дождётся, пока оба контейнера healthy
+```
+
+Остановить — `pnpm infra:down`, логи — `pnpm infra:logs`.
+
 ## Скрипты (корень)
 
-| Команда             | Описание                       |
-| ------------------- | ------------------------------ |
-| `pnpm lint`         | ESLint по всему репо           |
-| `pnpm lint:fix`     | ESLint с автофиксом            |
-| `pnpm format`       | Prettier (запись)              |
-| `pnpm format:check` | Prettier (проверка без записи) |
+| Команда             | Описание                          |
+| ------------------- | --------------------------------- |
+| `pnpm lint`         | ESLint по всему репо              |
+| `pnpm lint:fix`     | ESLint с автофиксом               |
+| `pnpm format`       | Prettier (запись)                 |
+| `pnpm format:check` | Prettier (проверка без записи)    |
+| `pnpm infra:up`     | Поднять Postgres + Redis (Docker) |
+| `pnpm infra:down`   | Остановить контейнеры             |
+| `pnpm infra:logs`   | Логи контейнеров (follow)         |
 
 Скрипты конкретного пакета — через фильтр: `pnpm --filter @slate/web dev`.
 

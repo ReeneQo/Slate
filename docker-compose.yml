@@ -1,0 +1,50 @@
+# Локальное dev-окружение Slate: Postgres (БД) + Redis (кэш/сессии/pub-sub).
+# Все креды и порты берутся из .env (`cp .env.example .env`). Хардкода паролей нет.
+# Redis поднимается сразу, хотя используется с блока 2 (сессии) и этапа 3 (presence).
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    # Порт сдвинут (5434), чтобы не конфликтовать с локальным Postgres на 5432.
+    # Параметризован: конфликт решается правкой POSTGRES_PORT в .env, а не этого файла.
+    ports:
+      - '${POSTGRES_PORT:-5434}:5432'
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      # Named volume, НЕ bind mount: на WSL2 bind на /mnt/c даёт деградацию через 9p
+      # и битые права у postgres. Named volume живёт в файловой системе Docker.
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # С -U/-d: голый pg_isready может отрапортовать healthy до готовности нужной базы.
+      # $$ — экранирование для Compose, чтобы переменную развернул shell внутри контейнера.
+      test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      # Попытки во время инициализации кластера не считаем провалами.
+      start_period: 10s
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    # Порт сдвинут (6381) по той же причине, что и Postgres. Параметризован.
+    ports:
+      - '${REDIS_PORT:-6381}:6379'
+    # appendonly yes — persistence: сессии из блока 2 переживают рестарт контейнера.
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  postgres_data:
+  redis_data:
