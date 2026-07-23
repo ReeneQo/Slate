@@ -18,7 +18,10 @@
     "format:check": "prettier --check .",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
-    "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck"
+    "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck",
+    "infra:up": "docker compose up -d --wait",
+    "infra:down": "docker compose down",
+    "infra:logs": "docker compose logs -f"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,mjs,cjs}": [
