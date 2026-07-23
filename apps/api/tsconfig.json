@@ -1,20 +1,36 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    // tsc — только типизация (noEmit). Реальную CommonJS-сборку делает SWC (.swcrc).
+    // Поэтому module=ESNext + moduleResolution=Bundler: современный резолвер (node10
+    // депрекейтнут и уйдёт в TS 7), бесрасширенные импорты в стиле Nest, чтение exports
+    // пакетов. Консистентно с apps/web.
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
     "target": "ES2023",
     "lib": ["ES2023"],
     "types": ["node"],
+
+    // Nest DI держится на метаданных декораторов: нужны и редактору, и typecheck,
+    // и SWC (см. .swcrc). Без них DI молча ломается.
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
+
+    // Реэкспорт enum-ов/типов из @slate/database несовместим с isolatedModules —
+    // держим выключенным (сборку делает SWC, не tsc).
     "isolatedModules": false,
     "declaration": false,
     "sourceMap": true,
-    "incremental": true,
-    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
     "outDir": "./dist",
-    "rootDir": "./src"
+    "rootDir": "./src",
+
+    // Потребление @slate/database из СОБРАННОГО dist (build-шаг пакета), не из исходников:
+    // tsc/SWC в Nest не тянут .ts соседнего пакета. Для web остаётся source-first.
+    // baseUrl не нужен (депрекейтнут, уйдёт в TS 7): paths резолвятся относительно
+    // каталога этого tsconfig.json.
+    "paths": {
+      "@slate/database": ["../../packages/database/dist/src/index"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

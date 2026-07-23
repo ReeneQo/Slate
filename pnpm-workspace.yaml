@@ -6,3 +6,4 @@ onlyBuiltDependencies:
   - unrs-resolver
   - prisma
   - '@prisma/engines'
+  - '@swc/core'
