@@ -1,0 +1,26 @@
+{
+  // Build-конфиг: компилирует src + сгенерированный клиент в dist (ESM).
+  // Отдельный от tsconfig.json (тот — typecheck исходников, noEmit, generated исключён).
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "types": ["node"],
+
+    // Клиент Prisma 7 (генератор prisma-client) — ESM: import.meta.url + импорты с '.ts'.
+    // NodeNext + rewriteRelativeImportExtensions переписывают '.ts' → '.js' в выхлопе,
+    // allowImportingTsExtensions разрешает такой синтаксис на входе.
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+
+    "rootDir": ".",
+    "outDir": "./dist",
+    "declaration": true,
+    "sourceMap": true,
+    "noEmit": false
+  },
+  "include": ["src/**/*", "generated/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
