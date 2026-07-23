@@ -3,15 +3,22 @@
   "globalDependencies": ["tsconfig.base.json", ".env"],
   "tasks": {
     "build": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "@slate/database#db:generate"],
       "outputs": ["dist/**"]
     },
     "dev": {
       "cache": false,
-      "persistent": true
+      "persistent": true,
+      "dependsOn": ["@slate/database#db:generate"]
     },
     "lint": {},
-    "typecheck": {},
-    "test": {}
+    "typecheck": {
+      "dependsOn": ["@slate/database#db:generate"]
+    },
+    "test": {},
+    "db:generate": {
+      "inputs": ["prisma/schema.prisma", "prisma.config.ts"],
+      "outputs": ["generated/**"]
+    }
   }
 }
