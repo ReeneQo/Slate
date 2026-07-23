@@ -1,0 +1,13 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/client"
+}
+
+/// TODO(SLT block 1): удалить — временная заглушка, Prisma не генерирует клиент из пустой схемы
+model HealthCheck {
+  id String @id @default(cuid())
+}

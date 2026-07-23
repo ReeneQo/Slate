@@ -31,6 +31,8 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/coverage/**',
       '**/*.tsbuildinfo',
+      // Сгенерированный Prisma-клиент (@slate/database) — не наш код, не линтуем.
+      '**/generated/**',
     ],
   },
 

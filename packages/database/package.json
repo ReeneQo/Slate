@@ -2,6 +2,23 @@
   "name": "@slate/database",
   "version": "0.0.0",
   "private": true,
-  "description": "Prisma schema + сгенерированный клиент. Заполняется на этапе 2.",
-  "scripts": {}
+  "description": "Prisma schema + сгенерированный клиент. Единственное место с ORM.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@prisma/client": "^7.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.21",
+    "prisma": "^7.9.0"
+  }
 }

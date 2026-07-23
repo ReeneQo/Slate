@@ -7,6 +7,9 @@ pnpm-lock.yaml
 *.tsbuildinfo
 .claude
 
+# Сгенерированный Prisma-клиент (@slate/database) — не форматируем.
+**/generated/
+
 # GitHub-шаблоны: ручные scaffold'ы с пустыми плейсхолдерами — точная
 # структура важна, Prettier не должен их переформатировать.
 .github/ISSUE_TEMPLATE/
