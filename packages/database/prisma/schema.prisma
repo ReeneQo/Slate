@@ -3,8 +3,15 @@ datasource db {
 }
 
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/client"
+  provider     = "prisma-client"
+  output       = "../generated/client"
+  // Nest компилируется SWC в CommonJS. ESM-клиент Prisma (import.meta.url) при
+  // require() из CJS даёт ERR_REQUIRE_ESM. Генерим клиент сразу в CJS.
+  moduleFormat        = "cjs"
+  // Импорты с расширением '.js' (а не '.ts') → на NodeNext они резолвятся в
+  // соседний '.ts' при typecheck и в '.js' в рантайме. Убирает нужду в
+  // allowImportingTsExtensions + rewriteRelativeImportExtensions в build-конфиге.
+  importFileExtension = "js"
 }
 
 /// TODO(SLT block 1): удалить — временная заглушка, Prisma не генерирует клиент из пустой схемы

@@ -2,14 +2,14 @@
   "name": "@slate/database",
   "version": "0.0.0",
   "private": true,
-  "type": "module",
+  "type": "commonjs",
   "description": "Prisma schema + сгенерированный клиент. Единственное место с ORM.",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/src/index.d.ts",
-      "import": "./dist/src/index.js",
+      "require": "./dist/src/index.js",
       "default": "./dist/src/index.js"
     }
   },
