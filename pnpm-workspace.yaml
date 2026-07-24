@@ -1,8 +1,15 @@
 packages:
   - 'apps/*'
   - 'packages/*'
-onlyBuiltDependencies:
-  - esbuild
-  - unrs-resolver
-  - prisma
-  - '@prisma/engines'
+
+# pnpm v11 требует явного одобрения build-скриптов зависимостей (supply-chain security).
+# Массив `onlyBuiltDependencies` из v10 УДАЛЁН в v11 и заменён на map `allowBuilds`
+# (имя пакета -> boolean). Пакеты вне списка по умолчанию запрещены; неодобренные
+# билды при `strictDepBuilds` (включён в CI) роняют install с ERR_PNPM_IGNORED_BUILDS.
+# Без одобрения не выполнятся postinstall'ы: нативные бинарники и движок Prisma.
+allowBuilds:
+  esbuild: true # apps/web (Vite) — нативный бандлер
+  '@swc/core': true # apps/api (NestJS) — SWC-компиляция
+  prisma: true # @slate/database — preinstall CLI
+  '@prisma/engines': true # @slate/database — скачивание query engine
+  unrs-resolver: true # eslint-import-resolver-typescript — нативный резолвер

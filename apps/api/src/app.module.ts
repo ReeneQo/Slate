@@ -1,12 +1,12 @@
 import { Module } from '@nestjs/common';
 
+import { HealthModule } from './modules/health/health.module';
+
 /**
- * Корневой модуль. Сюда подключаются доменные модули из `modules/`
- * и инфраструктура из `infrastructure/` по мере их появления.
+ * Корневой модуль. Инфраструктура (SLT-12) и доменные модули (блок 2)
+ * подключаются сюда по мере появления. Пока — только health.
  */
 @Module({
-  imports: [],
-  controllers: [],
-  providers: [],
+  imports: [HealthModule],
 })
 export class AppModule {}

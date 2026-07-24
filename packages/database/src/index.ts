@@ -6,4 +6,7 @@
 // Синглтон-обёртка (`PrismaService extends PrismaClient` с Nest lifecycle) живёт в
 // `apps/api` (SLT-12): один инстанс на приложение управляется DI. Инстанс в пакете
 // открыл бы лишние подключения к БД и сломал бы управление жизненным циклом.
-export * from '../generated/client/client';
+// Расширение '.ts' обязательно: build идёт под NodeNext (rewriteRelativeImportExtensions
+// перепишет его в '.js' в dist). Typecheck (moduleResolution Bundler + allowImportingTsExtensions)
+// такой импорт тоже принимает.
+export * from '../generated/client/client.ts';

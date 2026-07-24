@@ -5,18 +5,19 @@ Backend на **NestJS**. Архитектура: **feature-modular + repository*
 ## Запуск
 
 ```bash
-pnpm --filter @slate/api start:dev
+pnpm --filter @slate/api dev
 ```
 
 ## Структура
 
 ```
 src/
-├── main.ts                # точка входа
+├── main.ts                # точка входа (bootstrap)
 ├── app.module.ts          # корневой модуль
-├── modules/               # доменные feature-модули (board, auth, ...)
-├── infrastructure/        # prisma, redis, storage — отделено от домена
-└── common/                # guards, interceptors, filters, pipes, decorators
+├── modules/               # доменные feature-модули (health реализован; board, auth — блок 2)
+├── infrastructure/        # prisma, redis, storage — отделено от домена (наполняется в SLT-12)
+├── config/                # конфиг приложения (zod-валидация env — SLT-12)
+└── shared/                # decorators, guards, filters, utils — переиспользуемые примитивы
 ```
 
 ## Слои внутри доменного модуля
