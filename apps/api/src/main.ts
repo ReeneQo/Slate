@@ -4,22 +4,28 @@ import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from './app.module';
+import { validateEnv } from './config/env.validation';
+import { loadEnv } from './config/load-env';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  // Подтянуть .env в process.env (в проде реальное окружение имеет приоритет), затем
+  // валидировать ДО create(): при битом конфиге — чистая ошибка и process.exit(1), без
+  // Nest-стектрейса поверх. Дальше по коду работаем с типизированным config, не process.env.
+  loadEnv();
+  const config = validateEnv();
+
+  const app = await NestFactory.create(AppModule.forRoot(config));
 
   // Все маршруты под /api — фронт и будущий reverse-proxy рассчитывают на /api/*.
-  // Менять префикс позже больно, поэтому фиксируем сразу.
   app.setGlobalPrefix('api');
 
-  // CORS для SPA (Vite). Origin — из env, credentials — под куки-сессии из блока 2.
+  // CORS для SPA (Vite). Origin — из конфига, credentials — под куки-сессии из блока 2.
   app.enableCors({
-    origin: process.env.ALLOWED_ORIGIN ?? 'http://localhost:5173',
+    origin: config.app.allowedOrigin,
     credentials: true,
   });
 
-  // Единая валидация входа. whitelist — срезает поля вне DTO,
-  // transform — приводит payload к типам DTO. DTO появятся в блоке 2, конфиг стабилен.
+  // Единая валидация входа. whitelist — срезает поля вне DTO, transform — приводит к типам DTO.
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -27,13 +33,10 @@ async function bootstrap(): Promise<void> {
     }),
   );
 
-  // Корректное закрытие коннектов (Prisma/Redis из SLT-12) на SIGTERM/SIGINT.
+  // Корректное закрытие коннектов Prisma/Redis (onModuleDestroy) на SIGTERM/SIGINT.
   app.enableShutdownHooks();
 
-  // API_PORT (не PORT) — чтобы не коллидировать с портом Vite.
-  // TODO(SLT-12): заменить на валидированный zod-config.
-  const port = process.env.API_PORT ?? 3000;
-  await app.listen(port);
+  await app.listen(config.app.port);
 
   Logger.log(`API is running on ${await app.getUrl()}`, 'Bootstrap');
 }

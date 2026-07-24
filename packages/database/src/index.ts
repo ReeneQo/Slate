@@ -6,7 +6,9 @@
 // Синглтон-обёртка (`PrismaService extends PrismaClient` с Nest lifecycle) живёт в
 // `apps/api` (SLT-12): один инстанс на приложение управляется DI. Инстанс в пакете
 // открыл бы лишние подключения к БД и сломал бы управление жизненным циклом.
-// Расширение '.ts' обязательно: build идёт под NodeNext (rewriteRelativeImportExtensions
-// перепишет его в '.js' в dist). Typecheck (moduleResolution Bundler + allowImportingTsExtensions)
-// такой импорт тоже принимает.
-export * from '../generated/client/client.ts';
+//
+// Клиент генерится в CJS (schema.prisma: moduleFormat="cjs"), т.к. Nest компилируется
+// SWC в CommonJS и require() ESM-модуля дал бы ERR_REQUIRE_ESM. Расширение '.js' в
+// импорте — из importFileExtension="js": NodeNext резолвит его в соседний '.ts' при
+// typecheck и в '.js' в собранном dist.
+export * from '../generated/client/client.js';
