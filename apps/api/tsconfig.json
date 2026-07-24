@@ -22,15 +22,12 @@
     "declaration": false,
     "sourceMap": true,
     "outDir": "./dist",
-    "rootDir": "./src",
+    "rootDir": "./src"
 
-    // Потребление @slate/database из СОБРАННОГО dist (build-шаг пакета), не из исходников:
-    // tsc/SWC в Nest не тянут .ts соседнего пакета. Для web остаётся source-first.
-    // baseUrl не нужен (депрекейтнут, уйдёт в TS 7): paths резолвятся относительно
-    // каталога этого tsconfig.json.
-    "paths": {
-      "@slate/database": ["../../packages/database/dist/src/index"]
-    }
+    // @slate/database резолвится как обычный workspace-пакет: его package.json
+    // (exports/main/types) указывает на СОБРАННЫЙ CJS-dist. tsconfig paths больше не нужен —
+    // и tsc, и SWC (nest build) находят пакет через symlink в node_modules. Раньше paths
+    // без baseUrl ронял SWC (base_dir пустой) при первом же импорте пакета в коде.
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
