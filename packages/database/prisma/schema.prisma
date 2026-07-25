@@ -3,8 +3,8 @@ datasource db {
 }
 
 generator client {
-  provider     = "prisma-client"
-  output       = "../generated/client"
+  provider            = "prisma-client"
+  output              = "../generated/client"
   // Nest компилируется SWC в CommonJS. ESM-клиент Prisma (import.meta.url) при
   // require() из CJS даёт ERR_REQUIRE_ESM. Генерим клиент сразу в CJS.
   moduleFormat        = "cjs"
@@ -14,7 +14,115 @@ generator client {
   importFileExtension = "js"
 }
 
-/// TODO(SLT block 1): удалить — временная заглушка, Prisma не генерирует клиент из пустой схемы
-model HealthCheck {
-  id String @id @default(cuid())
+model User {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  email        String  @unique
+  // Nullable: заготовка под OAuth-регистрацию (блок 2) — у такого юзера пароля нет.
+  // На фронт отдаём флаг hasPassword, сам хеш наружу не уходит.
+  passwordHash String? @map("password_hash")
+  displayName  String  @map("display_name")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  boards           Board[]
+  boardMemberships BoardMember[]
+
+  @@map("users")
+}
+
+model Board {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  title   String @default("Untitled")
+  // Счётчик ревизий доски — под оптимистичную блокировку в реалтайме (этап 3).
+  version Int    @default(0)
+
+  ownerId String @map("owner_id") @db.Uuid
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  elements Element[]
+  members  BoardMember[]
+
+  @@index([ownerId])
+  @@map("boards")
+}
+
+model Element {
+  // БЕЗ @default — id генерирует клиент. Холст рисует фигуру мгновенно и не ждёт
+  // ответа сервера, поэтому идентификатор должен существовать до записи в БД.
+  // @db.Uuid валидирует формат на уровне Postgres — мусорный клиентский id не пройдёт.
+  id String @id @db.Uuid
+
+  boardId String @map("board_id") @db.Uuid
+  board   Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
+
+  type ElementType
+
+  x       Float
+  y       Float
+  angle   Float @default(0)
+  opacity Float @default(1)
+
+  stroke      String
+  fill        String?
+  strokeWidth Float   @map("stroke_width")
+  // Сид для «рукописного» стиля отрисовки — форма фигуры должна быть
+  // одинаковой у всех клиентов, поэтому хранится, а не генерится локально.
+  seed        Int
+
+  // Дробный порядок (fractional indexing): вставка между соседями не требует
+  // переписывать order у остальных элементов доски.
+  order Float
+  // Геометрия, зависящая от типа фигуры (width/height, points, radius).
+  // jsonb вместо json — бинарное хранение, чтение пачкой при загрузке холста быстрее.
+  // Форму валидирует zod на границе API: БД хранит, схему контракта держит приложение.
+  data  Json  @db.JsonB
+
+  version   Int       @default(0)
+  // Soft delete: удаление обратимо (undo) и переносимо между клиентами в реалтайме.
+  deletedAt DateTime? @map("deleted_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Основной запрос — «живые элементы доски», deletedAt входит в индекс.
+  @@index([boardId, deletedAt])
+  @@map("elements")
+}
+
+model BoardMember {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  boardId String @map("board_id") @db.Uuid
+  board   Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role BoardMemberRole @default(editor)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Один юзер — одна роль на доске.
+  @@unique([boardId, userId])
+  // Обратный обход: «доски, куда меня пригласили».
+  @@index([userId])
+  @@map("board_members")
+}
+
+enum ElementType {
+  rect
+  ellipse
+  line
+}
+
+enum BoardMemberRole {
+  editor
+  viewer
 }
