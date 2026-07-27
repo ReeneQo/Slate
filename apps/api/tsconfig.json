@@ -9,7 +9,9 @@
     "moduleResolution": "Bundler",
     "target": "ES2023",
     "lib": ["ES2023"],
-    "types": ["node"],
+    // jest — ради глобалей (describe/it/expect) в *.spec.ts. Раннер их не типизирует сам:
+    // @swc/jest только транспилирует, проверку типов делает tsc.
+    "types": ["node", "jest"],
 
     // Nest DI держится на метаданных декораторов: нужны и редактору, и typecheck,
     // и SWC (см. .swcrc). Без них DI молча ломается.
