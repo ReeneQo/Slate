@@ -5,6 +5,7 @@ import type { AppConfig } from './config/env.schema';
 import { PrismaModule } from './infrastructure/prisma/prisma.module';
 import { RedisModule } from './infrastructure/redis/redis.module';
 import { HealthModule } from './modules/health/health.module';
+import { UserModule } from './modules/user/user.module';
 
 /**
  * Корневой модуль динамический: валидированный конфиг приходит из main.ts (проверен ДО
@@ -19,7 +20,7 @@ export class AppModule {
   static forRoot(config: AppConfig): DynamicModule {
     return {
       module: AppModule,
-      imports: [ConfigModule.forRoot(config), PrismaModule, RedisModule, HealthModule],
+      imports: [ConfigModule.forRoot(config), PrismaModule, RedisModule, HealthModule, UserModule],
     };
   }
 }
