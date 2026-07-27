@@ -22,8 +22,25 @@ const rawEnvSchema = z.object({
 
   ALLOWED_ORIGIN: z.string().min(1),
 
-  // Задел под блок 2 (сессии): пока не обязателен. Наполнится позже.
-  SESSION_SECRET: z.string().min(1).optional(),
+  // Ключ подписи session-id. Обязателен: сервер без него поднимать нельзя — подделка
+  // куки становится тривиальной. Минимум 32 символа ≈ 256 бит энтропии от
+  // `openssl rand -base64 32`; короткий секрет перебирается офлайн по перехваченной куке.
+  SESSION_SECRET: z.string().min(32, 'ожидается минимум 32 символа (openssl rand -base64 32)'),
+
+  // Имя cookie. Своё, а не дефолтное `connect.sid`: дефолт бесплатно сообщает
+  // сканеру стек (express-session).
+  SESSION_NAME: z.string().min(1),
+
+  // TTL сессии в МИЛЛИСЕКУНДАХ. Единица выбрана под потребителя: express-session
+  // принимает cookie.maxAge именно в мс, поэтому на месте использования нет ни
+  // конверсии, ни повода перепутать секунды с миллисекундами. Для Redis-store
+  // (ttl в секундах) конверсия одна, явная и в одном месте — см. session.factory.
+  SESSION_MAX_AGE: z.coerce.number().int().positive(),
+
+  // Домен cookie. ОПЦИОНАЛЬНА: в деве пусто (браузер сам привяжет к localhost —
+  // явный `domain: 'localhost'` часть браузеров отвергает), в проде — общий домен
+  // под кросс-сабдоменные куки (api.slate.app + app.slate.app).
+  SESSION_DOMAIN: z.string().min(1).optional(),
 });
 
 export const envSchema = rawEnvSchema.transform((env) => ({
@@ -31,13 +48,25 @@ export const envSchema = rawEnvSchema.transform((env) => ({
     port: env.API_PORT,
     nodeEnv: env.NODE_ENV,
     allowedOrigin: env.ALLOWED_ORIGIN,
-    sessionSecret: env.SESSION_SECRET ?? null,
   },
   database: {
     url: env.DATABASE_URL,
   },
   redis: {
     url: env.REDIS_URL,
+  },
+  session: {
+    secret: env.SESSION_SECRET,
+    name: env.SESSION_NAME,
+    maxAgeMs: env.SESSION_MAX_AGE,
+    // undefined, а не null: express-session отличает «домен не задан» от значения,
+    // и undefined — ровно то, что он ожидает при отсутствии.
+    domain: env.SESSION_DOMAIN,
+    // secure ВЫВОДИТСЯ из среды, а не читается из env. Это следствие, а не выбор:
+    // env-флаг создаёт две одинаково тихие аварии — забыли в проде (кука уходит по
+    // HTTP и снимается любым перехватчиком) или включили в деве (браузер молча
+    // отбрасывает secure-куку на http://localhost, и «логин не работает» без ошибок).
+    secureCookie: env.NODE_ENV === 'production',
   },
 }));
 

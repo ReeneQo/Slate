@@ -25,4 +25,8 @@ export class ConfigService {
   get redis(): AppConfig['redis'] {
     return this.config.redis;
   }
+
+  get session(): AppConfig['session'] {
+    return this.config.session;
+  }
 }
