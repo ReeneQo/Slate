@@ -1,6 +1,7 @@
 {
   "$schema": "https://swc.rs/schema.json",
   "sourceMaps": true,
+  "exclude": [".*\\.spec\\.ts$"],
   "jsc": {
     "target": "es2023",
     "parser": {

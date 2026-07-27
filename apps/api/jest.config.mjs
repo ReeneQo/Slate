@@ -9,13 +9,23 @@ import { readFileSync } from 'node:fs';
  * правка .swcrc (например, смена target) молча разошлась бы с тем, как трансформируются
  * тесты, и тесты начали бы проверять код, собранный не так, как продовый.
  *
- * `$schema` выкидываем: он для редактора, а swc на незнакомый ключ ругается.
+ * Два ключа выкидываем:
+ * - `$schema` — он для редактора, swc на незнакомый ключ ругается;
+ * - `exclude` — в .swcrc он отсекает *.spec.ts, чтобы `nest build` не клал тесты и
+ *   затянутый ими @nestjs/testing в прод-dist. Для раннера это ровно те файлы, которые
+ *   он обязан трансформировать, поэтому здесь ключ снимается.
+ *
+ * `swcrc: false` обязателен и не является дублированием. Снять `exclude` с объекта мало:
+ * @swc/core всё равно сам находит .swcrc на диске и применяет его поверх переданных
+ * опций — тесты падают с «cannot process file because it's ignored by .swcrc». Флаг
+ * выключает этот неявный поиск, оставляя единственным источником конфига то, что мы
+ * прочитали и передали явно.
  */
 function loadSwcConfig() {
   const raw = readFileSync(new URL('.swcrc', import.meta.url), 'utf8');
-  const { $schema: _schema, ...swcConfig } = JSON.parse(raw);
+  const { $schema: _schema, exclude: _exclude, ...swcConfig } = JSON.parse(raw);
 
-  return swcConfig;
+  return { ...swcConfig, swcrc: false };
 }
 
 /**
