@@ -13,3 +13,4 @@ allowBuilds:
   prisma: true # @slate/database — preinstall CLI
   '@prisma/engines': true # @slate/database — скачивание query engine
   unrs-resolver: true # eslint-import-resolver-typescript — нативный резолвер
+  argon2: true # apps/api — нативный аддон хеширования паролей
