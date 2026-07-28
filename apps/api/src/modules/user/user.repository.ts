@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@slate/database';
 
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import {
@@ -7,6 +8,10 @@ import {
   USER_WITH_HASH_SELECT,
   type UserWithHash,
 } from './entities/user.entity';
+import { EmailAlreadyTakenError } from './user.errors';
+
+/** Код Prisma для нарушения unique-constraint. */
+const UNIQUE_CONSTRAINT_VIOLATION = 'P2002';
 
 /** Данные для вставки. `passwordHash` — УЖЕ захешированный: репозиторий не хеширует. */
 export interface CreateUserData {
@@ -62,6 +67,24 @@ export class UserRepository {
   }
 
   /**
+   * По id, с хешем. Нужен ровно одному сценарию — GET /auth/me, которому в контракте
+   * требуется `hasPassword`.
+   *
+   * Почему нельзя обойтись findById: безопасная выборка НЕ содержит passwordHash
+   * (в этом её смысл), а значит из неё физически невозможно вывести, есть ли у
+   * пользователя пароль. Факт должен прийти оттуда, где хеш реально доступен.
+   *
+   * Наружу хеш при этом не уходит: вызывающий сразу сворачивает его в булев флаг
+   * через UserService.hasPassword, а маппер перечисляет поля поимённо (см. toUserResponse).
+   */
+  findByIdWithHash(id: string): Promise<UserWithHash | null> {
+    return this.prisma.user.findUnique({
+      where: { id },
+      select: USER_WITH_HASH_SELECT,
+    });
+  }
+
+  /**
    * `id` не передаём: в схеме на User стоит `@default(uuid(7))` — его генерирует БД.
    * (Ср. Element: там `@default` намеренно НЕТ, потому что холст рисует фигуру до
    * ответа сервера и id должен существовать на клиенте раньше записи.)
@@ -69,10 +92,37 @@ export class UserRepository {
    * `select` нужен и на create: без него Prisma возвращает всю вставленную строку,
    * включая только что записанный хеш.
    */
-  create(data: CreateUserData): Promise<SafeUser> {
-    return this.prisma.user.create({
-      data,
-      select: SAFE_USER_SELECT,
-    });
+  async create(data: CreateUserData): Promise<SafeUser> {
+    try {
+      // `await` внутри try обязателен: без него промис уедет наружу и catch не сработает.
+      return await this.prisma.user.create({
+        data,
+        select: SAFE_USER_SELECT,
+      });
+    } catch (error) {
+      if (isUniqueConstraintViolation(error)) {
+        throw new EmailAlreadyTakenError(data.email);
+      }
+
+      throw error;
+    }
   }
+}
+
+/**
+ * Единственное исключение из правила «репозиторий не бросает»: это не бизнес-проверка,
+ * а ПЕРЕВОД ошибки ORM на язык домена. Сделать его больше негде — код P2002 виден только
+ * здесь, а выше по стеку про Prisma знать не положено (см. CLAUDE.md: сервис не знает про ORM).
+ *
+ * Проверять `meta.target` намеренно не станем: его форма зависит от версии Prisma и
+ * коннектора (то массив полей, то имя constraint'а), то есть это ненадёжная опора. У модели
+ * User ровно один unique помимо первичного ключа — email; коллизия же uuid v7, который
+ * генерирует БД, событие не того порядка вероятности, чтобы под него подстраивать код.
+ * Поэтому любой P2002 при вставке пользователя — это занятый email.
+ */
+function isUniqueConstraintViolation(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === UNIQUE_CONSTRAINT_VIOLATION
+  );
 }

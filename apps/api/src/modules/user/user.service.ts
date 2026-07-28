@@ -32,6 +32,13 @@ export class UserService {
    * Открытый пароль хешируется ЗДЕСЬ и дальше не живёт: в репозиторий уходит уже хеш.
    * Так репозиторий физически не может записать пароль в открытом виде — даже по ошибке,
    * потому что он его не видит.
+   *
+   * Занятость email НЕ проверяется заранее: между SELECT и INSERT есть окно, в которое
+   * проходят оба параллельных запроса (TOCTOU), и единственная настоящая защита — это
+   * unique-constraint в БД. Репозиторий переводит его нарушение в EmailAlreadyTakenError,
+   * а та прозрачно летит вызывающему — см. AuthService.register.
+   *
+   * @throws {EmailAlreadyTakenError} email занят
    */
   async create({ email, password, displayName }: CreateUserInput): Promise<SafeUser> {
     const passwordHash = await this.hashService.hash(password);
@@ -50,6 +57,14 @@ export class UserService {
   /** Только для проверки пароля при логине (SLT-16). Всем остальным — findByEmail. */
   findByEmailWithHash(email: string): Promise<UserWithHash | null> {
     return this.userRepository.findByEmailWithHash(email);
+  }
+
+  /**
+   * Только для GET /auth/me: там в контракте есть `hasPassword`, а вывести его из
+   * безопасной выборки нельзя — в ней нет хеша. Всем остальным — findById.
+   */
+  findByIdWithHash(id: string): Promise<UserWithHash | null> {
+    return this.userRepository.findByIdWithHash(id);
   }
 
   /**
