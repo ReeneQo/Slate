@@ -17,6 +17,7 @@
     "@nestjs/common": "^11.0.0",
     "@nestjs/core": "^11.0.0",
     "@nestjs/platform-express": "^11.0.0",
+    "@nestjs/throttler": "^6.5.0",
     "@prisma/adapter-pg": "^7.9.0",
     "@slate/database": "workspace:*",
     "argon2": "^0.44.0",

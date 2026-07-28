@@ -4,7 +4,7 @@ import { ConfigModule } from './config/config.module';
 import type { AppConfig } from './config/env.schema';
 import { PrismaModule } from './infrastructure/prisma/prisma.module';
 import { RedisModule } from './infrastructure/redis/redis.module';
-import { SessionsModule } from './modules/auth/sessions/sessions.module';
+import { AuthModule } from './modules/auth/auth.module';
 import { HealthModule } from './modules/health/health.module';
 import { UserModule } from './modules/user/user.module';
 
@@ -27,7 +27,10 @@ export class AppModule {
         RedisModule,
         HealthModule,
         UserModule,
-        SessionsModule,
+        // SessionsModule напрямую здесь больше не нужен — его импортирует AuthModule,
+        // единственный его потребитель. Лишний импорт в корне создаёт впечатление, будто
+        // сессии доступны всем модулям, тогда как DI так не работает.
+        AuthModule,
       ],
     };
   }
