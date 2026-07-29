@@ -14,3 +14,16 @@ allowBuilds:
   '@prisma/engines': true # @slate/database — скачивание query engine
   unrs-resolver: true # eslint-import-resolver-typescript — нативный резолвер
   argon2: true # apps/api — нативный аддон хеширования паролей
+
+  # Пришли транзитивно с testcontainers (dockerode → ssh2). Явное `false`, а не
+  # отсутствие в списке: неодобренный билд роняет install при strictDepBuilds, а
+  # запись фиксирует, что решение принято, а не забыто.
+  #
+  # Все три нужны только для Docker поверх SSH — мы ходим в демон через unix-сокет.
+  # ssh2 без своего билда работает на чистом JS, cpu-features — необязательное
+  # ускорение крипты для него же, postinstall protobufjs к рантайму отношения не имеет.
+  # Собирать нативный код ради неиспользуемого транспорта — лишний C++-тулчейн на
+  # каждой машине и в CI.
+  ssh2: false
+  cpu-features: false
+  protobufjs: false

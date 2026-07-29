@@ -7,11 +7,12 @@
     "dev": "nest start --watch",
     "build": "nest build",
     "start": "node dist/src/main.js",
-    "lint": "eslint \"src/**/*.ts\"",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:cov": "jest --coverage"
+    "test:cov": "jest --coverage",
+    "test:e2e": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest-e2e.config.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",
@@ -39,12 +40,16 @@
     "@swc/cli": "^0.7.0",
     "@swc/core": "^1.7.0",
     "@swc/jest": "^0.2.39",
+    "@testcontainers/postgresql": "^12.0.4",
+    "@testcontainers/redis": "^12.0.4",
     "@types/express": "^5.0.0",
     "@types/express-session": "^1.19.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.20.0",
+    "@types/supertest": "^7.2.1",
     "jest": "^30.4.2",
+    "supertest": "^7.2.2",
     "typescript": "^5.5.0"
   }
 }

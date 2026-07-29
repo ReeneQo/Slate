@@ -20,6 +20,18 @@
       "dependsOn": ["@slate/database#db:generate"]
     },
     "test": {},
+    "test:e2e": {
+      // Задача НЕ входит в `test` и ни от чего не зависит по графу: `turbo run test` обязан
+      // оставаться быстрым и работать там, где Docker недоступен вовсе.
+      //
+      // cache: false — обязательно. Результат зависит не от файлов репозитория, а от живого
+      // Docker-демона; закешированный «зелёный» прогон означал бы, что тесты не запускались,
+      // хотя отчёт утверждает обратное.
+      "cache": false,
+      // Prisma-клиент должен быть сгенерирован и пакет собран: приложение импортирует
+      // @slate/database, а в чистом клоне его dist ещё не существует.
+      "dependsOn": ["^build", "@slate/database#db:generate"]
+    },
     "db:generate": {
       "inputs": ["prisma/schema.prisma", "prisma.config.ts"],
       "outputs": ["generated/**"]
