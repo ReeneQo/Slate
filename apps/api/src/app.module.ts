@@ -5,6 +5,7 @@ import type { AppConfig } from './config/env.schema';
 import { PrismaModule } from './infrastructure/prisma/prisma.module';
 import { RedisModule } from './infrastructure/redis/redis.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { BoardModule } from './modules/board/board.module';
 import { HealthModule } from './modules/health/health.module';
 import { UserModule } from './modules/user/user.module';
 
@@ -31,6 +32,7 @@ export class AppModule {
         // единственный его потребитель. Лишний импорт в корне создаёт впечатление, будто
         // сессии доступны всем модулям, тогда как DI так не работает.
         AuthModule,
+        BoardModule,
       ],
     };
   }
