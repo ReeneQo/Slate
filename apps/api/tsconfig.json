@@ -24,13 +24,19 @@
     "declaration": false,
     "sourceMap": true,
     "outDir": "./dist",
-    "rootDir": "./src"
+    // rootDir охватывает и src, и test: e2e-тесты импортируют исходники приложения, и без
+    // общего корня tsc ругался бы «is not under rootDir». На сборку это не влияет — эмитит
+    // не tsc, а SWC по nest-cli.json (sourceRoot: src), и test/ туда не попадает.
+    "rootDir": "."
 
     // @slate/database резолвится как обычный workspace-пакет: его package.json
     // (exports/main/types) указывает на СОБРАННЫЙ CJS-dist. tsconfig paths больше не нужен —
     // и tsc, и SWC (nest build) находят пакет через symlink в node_modules. Раньше paths
     // без baseUrl ронял SWC (base_dir пустой) при первом же импорте пакета в коде.
   },
-  "include": ["src/**/*"],
+  // test/** включён намеренно: иначе e2e-файлы не типизируются ни tsc, ни type-aware
+  // правилами ESLint (projectService ищет tsconfig, который их включает), и ошибки в них
+  // всплывали бы только в рантайме прогона.
+  "include": ["src/**/*", "test/**/*"],
   "exclude": ["node_modules", "dist"]
 }

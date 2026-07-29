@@ -7,11 +7,12 @@
     "dev": "nest start --watch",
     "build": "nest build",
     "start": "node dist/src/main.js",
-    "lint": "eslint \"src/**/*.ts\"",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:cov": "jest --coverage"
+    "test:cov": "jest --coverage",
+    "test:e2e": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest-e2e.config.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",
