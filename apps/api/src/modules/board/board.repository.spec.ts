@@ -1,0 +1,247 @@
+import { Prisma } from '@slate/database';
+
+import type { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { BoardRepository } from './board.repository';
+import { BOARD_SELECT } from './entities/board.entity';
+import { ELEMENT_ORDER_BY, ELEMENT_SELECT } from './entities/element.entity';
+
+const USER_ID = '019fa40d-6841-70ed-8b1d-7c64e6411bd6';
+const BOARD_ID = '019fa5b1-0000-7000-8000-000000000001';
+const TITLE = 'Sprint board';
+
+/**
+ * Ожидаемая область видимости запроса к КОНКРЕТНОЙ доске.
+ *
+ * Форма выписана здесь буквально, а не взята вызовом `accessibleBoardScope(USER_ID)`. Иначе
+ * тест повторял бы реализацию и остался бы зелёным при любой её правке — включая ту, что
+ * открывает доступ ко всем доскам. Проверка доступа должна быть зафиксирована независимо.
+ */
+const ACCESS_SCOPED_WHERE = { id: BOARD_ID, OR: [{ ownerId: USER_ID }] };
+
+/**
+ * Узкие сигнатуры вместо настоящих делегатов Prisma.
+ *
+ * Делегаты — обобщённые перегруженные методы, чей возвращаемый тип выводится из `select`
+ * вызывающей стороны; воспроизводить их в моке значит воевать с выводом типов ради нулевой
+ * пользы. Здесь важно ДРУГОЕ: с какими аргументами репозиторий обращается к БД. Аргументы
+ * типизированы настоящими Prisma-типами (опечатка в `where` не скомпилируется), а результат —
+ * `unknown`: его форму задаёт `select` в самом репозитории, и там её проверяет tsc.
+ */
+type BoardFindFirst = (args: Prisma.BoardFindFirstArgs) => Promise<unknown>;
+type BoardFindMany = (args: Prisma.BoardFindManyArgs) => Promise<unknown>;
+type BoardCreate = (args: Prisma.BoardCreateArgs) => Promise<unknown>;
+type BoardUpdate = (args: Prisma.BoardUpdateArgs) => Promise<unknown>;
+type BoardDelete = (args: Prisma.BoardDeleteArgs) => Promise<unknown>;
+
+/** Ошибка «строка под условие не найдена» — то, чем Prisma отвечает на update/delete впустую. */
+function recordNotFound(): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError('No record was found for an update', {
+    code: 'P2025',
+    clientVersion: 'test',
+  });
+}
+
+function createDependencies() {
+  const findFirst = jest.fn() as jest.MockedFunction<BoardFindFirst>;
+  const findMany = jest.fn() as jest.MockedFunction<BoardFindMany>;
+  const create = jest.fn() as jest.MockedFunction<BoardCreate>;
+  const update = jest.fn() as jest.MockedFunction<BoardUpdate>;
+  // `delete` — ключевое слово, идентификатором быть не может.
+  const deleteBoard = jest.fn() as jest.MockedFunction<BoardDelete>;
+
+  // Единственный шов теста. Полноценный PrismaService подделать нельзя (приватное состояние и
+  // десятки делегатов), а поднимать настоящий значит идти в БД — это e2e (SLT-21).
+  const prisma = {
+    board: { findFirst, findMany, create, update, delete: deleteBoard },
+  } as unknown as PrismaService;
+
+  return {
+    boardRepository: new BoardRepository(prisma),
+    findFirst,
+    findMany,
+    create,
+    update,
+    deleteBoard,
+  };
+}
+
+describe('BoardRepository', () => {
+  describe('create', () => {
+    it('пишет ownerId из аргумента и не тянет из строки лишних полей', async () => {
+      const { boardRepository, create } = createDependencies();
+      create.mockResolvedValue({});
+
+      await boardRepository.create({ ownerId: USER_ID, title: TITLE });
+
+      // select обязателен и на вставке: без него Prisma вернёт всю строку, включая version.
+      expect(create).toHaveBeenCalledWith({
+        data: { ownerId: USER_ID, title: TITLE },
+        select: BOARD_SELECT,
+      });
+    });
+
+    it('без title оставляет колонку незаполненной — дефолт ставит БД', async () => {
+      const { boardRepository, create } = createDependencies();
+      create.mockResolvedValue({});
+
+      await boardRepository.create({ ownerId: USER_ID });
+
+      // undefined ⇒ колонки нет в INSERT ⇒ срабатывает @default("Untitled") из схемы.
+      // Пустая строка или своя константа означали бы дефолт в двух местах.
+      expect(create).toHaveBeenCalledWith({
+        data: { ownerId: USER_ID, title: undefined },
+        select: BOARD_SELECT,
+      });
+    });
+  });
+
+  describe('findAllOwnedBy', () => {
+    it('фильтрует по ownerId и ничего не объединяет с расшаренным', async () => {
+      const { boardRepository, findMany } = createDependencies();
+      findMany.mockResolvedValue([]);
+
+      await boardRepository.findAllOwnedBy(USER_ID);
+
+      // Ровно `{ ownerId }`: ни OR, ни members. «Мои доски» на этом этапе — только свои,
+      // union owned ∪ shared появится вместе с шерингом (этап 3) и осознанно.
+      expect(findMany).toHaveBeenCalledWith({
+        where: { ownerId: USER_ID },
+        orderBy: { updatedAt: 'desc' },
+        select: BOARD_SELECT,
+      });
+    });
+  });
+
+  describe('findAccessible', () => {
+    it('сужает выборку доской И её доступностью', async () => {
+      const { boardRepository, findFirst } = createDependencies();
+      findFirst.mockResolvedValue(null);
+
+      await boardRepository.findAccessible(BOARD_ID, USER_ID);
+
+      // Проверка доступа — часть условия запроса, а не отдельный if после чтения: чужая строка
+      // не должна оказаться в памяти процесса даже на мгновение.
+      expect(findFirst).toHaveBeenCalledWith({
+        where: ACCESS_SCOPED_WHERE,
+        select: BOARD_SELECT,
+      });
+    });
+
+    it('возвращает null, когда под scope ничего не нашлось', async () => {
+      const { boardRepository, findFirst } = createDependencies();
+      findFirst.mockResolvedValue(null);
+
+      await expect(boardRepository.findAccessible(BOARD_ID, USER_ID)).resolves.toBeNull();
+    });
+  });
+
+  describe('findElements', () => {
+    it('запрашивает только живые элементы (deletedAt IS NULL) в порядке отрисовки', async () => {
+      const { boardRepository, findFirst } = createDependencies();
+      findFirst.mockResolvedValue({ elements: [] });
+
+      await boardRepository.findElements(BOARD_ID, USER_ID);
+
+      // У Element в схеме soft delete: без фильтра на холсте появились бы фигуры, которые
+      // пользователь удалил. Фильтр вложен в тот же access-scoped запрос — прочитать элементы
+      // чужой доски мимо проверки нельзя.
+      expect(findFirst).toHaveBeenCalledWith({
+        where: ACCESS_SCOPED_WHERE,
+        select: {
+          elements: {
+            where: { deletedAt: null },
+            orderBy: ELEMENT_ORDER_BY,
+            select: ELEMENT_SELECT,
+          },
+        },
+      });
+    });
+
+    it('на недоступную доску отдаёт null, на пустую — пустой массив', async () => {
+      const { boardRepository, findFirst } = createDependencies();
+
+      findFirst.mockResolvedValue(null);
+      await expect(boardRepository.findElements(BOARD_ID, USER_ID)).resolves.toBeNull();
+
+      findFirst.mockResolvedValue({ elements: [] });
+      await expect(boardRepository.findElements(BOARD_ID, USER_ID)).resolves.toEqual([]);
+    });
+  });
+
+  describe('updateAccessible', () => {
+    it('инкрементит version атомарно и под тем же access-scope', async () => {
+      const { boardRepository, update } = createDependencies();
+      update.mockResolvedValue({});
+
+      await boardRepository.updateAccessible(BOARD_ID, USER_ID, { title: 'Renamed' });
+
+      // `{ increment: 1 }`, а не `version: value + 1`: инкремент считает БД. Прочитать-прибавить-
+      // записать потеряло бы ревизию при двух параллельных PATCH'ах, а на этот счётчик будет
+      // опираться оптимистическая блокировка этапа 3.
+      expect(update).toHaveBeenCalledWith({
+        where: ACCESS_SCOPED_WHERE,
+        data: { title: 'Renamed', version: { increment: 1 } },
+        select: BOARD_SELECT,
+      });
+    });
+
+    it('превращает «строки под условие нет» в null, а не в 500', async () => {
+      const { boardRepository, update } = createDependencies();
+      update.mockRejectedValue(recordNotFound());
+
+      // P2025 здесь — это и «доски нет», и «доска чужая»: scope в условии, БД их не различает.
+      await expect(
+        boardRepository.updateAccessible(BOARD_ID, USER_ID, { title: 'Renamed' }),
+      ).resolves.toBeNull();
+    });
+
+    it('пробрасывает любую другую ошибку БД', async () => {
+      const { boardRepository, update } = createDependencies();
+      const connectionFailure = new Error('connection terminated');
+      update.mockRejectedValue(connectionFailure);
+
+      // Глотать всё подряд — значит отвечать 404 на упавшую базу и искать причину в логах фронта.
+      await expect(
+        boardRepository.updateAccessible(BOARD_ID, USER_ID, { title: 'Renamed' }),
+      ).rejects.toBe(connectionFailure);
+    });
+  });
+
+  describe('deleteAccessible', () => {
+    it('удаляет под access-scope и полагается на каскад БД', async () => {
+      const { boardRepository, deleteBoard } = createDependencies();
+      deleteBoard.mockResolvedValue({ id: BOARD_ID });
+
+      await expect(boardRepository.deleteAccessible(BOARD_ID, USER_ID)).resolves.toBe(true);
+
+      // Элементы и участников сносит ON DELETE CASCADE (миграция 20260725144536_init) — ни
+      // транзакции, ни ручного удаления детей здесь нет и быть не должно.
+      expect(deleteBoard).toHaveBeenCalledWith({
+        where: ACCESS_SCOPED_WHERE,
+        select: { id: true },
+      });
+    });
+
+    it('на чужую или отсутствующую доску возвращает false', async () => {
+      const { boardRepository, deleteBoard } = createDependencies();
+      deleteBoard.mockRejectedValue(recordNotFound());
+
+      await expect(boardRepository.deleteAccessible(BOARD_ID, USER_ID)).resolves.toBe(false);
+    });
+
+    it('пробрасывает любую другую ошибку БД', async () => {
+      const { boardRepository, deleteBoard } = createDependencies();
+      const foreignKeyFailure = new Prisma.PrismaClientKnownRequestError('FK violation', {
+        code: 'P2003',
+        clientVersion: 'test',
+      });
+      deleteBoard.mockRejectedValue(foreignKeyFailure);
+
+      // Отдельно от P2025: пропади каскад из схемы, DELETE упадёт на FK — и это должно быть
+      // видно как ошибка, а не как «доска не найдена».
+      await expect(boardRepository.deleteAccessible(BOARD_ID, USER_ID)).rejects.toBe(
+        foreignKeyFailure,
+      );
+    });
+  });
+});
