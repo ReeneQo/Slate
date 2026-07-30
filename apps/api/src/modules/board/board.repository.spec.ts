@@ -1,9 +1,9 @@
 import { Prisma } from '@slate/database';
 
 import type { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { ELEMENT_ORDER_BY, ELEMENT_SELECT } from '../element/entities/element.entity';
 import { BoardRepository } from './board.repository';
 import { BOARD_SELECT } from './entities/board.entity';
-import { ELEMENT_ORDER_BY, ELEMENT_SELECT } from './entities/element.entity';
 
 const USER_ID = '019fa40d-6841-70ed-8b1d-7c64e6411bd6';
 const BOARD_ID = '019fa5b1-0000-7000-8000-000000000001';
@@ -132,6 +132,29 @@ describe('BoardRepository', () => {
       findFirst.mockResolvedValue(null);
 
       await expect(boardRepository.findAccessible(BOARD_ID, USER_ID)).resolves.toBeNull();
+    });
+  });
+
+  describe('existsAccessible', () => {
+    it('спрашивает только факт существования под тем же access-scope', async () => {
+      const { boardRepository, findFirst } = createDependencies();
+      findFirst.mockResolvedValue({ id: BOARD_ID });
+
+      await expect(boardRepository.existsAccessible(BOARD_ID, USER_ID)).resolves.toBe(true);
+
+      // Ровно тот же where, что у findAccessible: проверка доступа одна на модуль. select сужен
+      // до id — метаданные доски для ответа «можно» не нужны.
+      expect(findFirst).toHaveBeenCalledWith({
+        where: ACCESS_SCOPED_WHERE,
+        select: { id: true },
+      });
+    });
+
+    it('на чужую или отсутствующую доску возвращает false', async () => {
+      const { boardRepository, findFirst } = createDependencies();
+      findFirst.mockResolvedValue(null);
+
+      await expect(boardRepository.existsAccessible(BOARD_ID, USER_ID)).resolves.toBe(false);
     });
   });
 

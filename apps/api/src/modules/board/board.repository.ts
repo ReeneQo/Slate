@@ -2,14 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@slate/database';
 
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
-import { accessibleBoardScope } from './board.access';
-import { BOARD_SELECT, type BoardEntity } from './entities/board.entity';
 import {
   ELEMENT_ORDER_BY,
   ELEMENT_SELECT,
   type ElementEntity,
   LIVE_ELEMENT_WHERE,
-} from './entities/element.entity';
+} from '../element/entities/element.entity';
+import { accessibleBoardScope } from './board.access';
+import { BOARD_SELECT, type BoardEntity } from './entities/board.entity';
 
 /** Код Prisma для «запись под условие не найдена» (update/delete не нашли строку). */
 const RECORD_NOT_FOUND = 'P2025';
@@ -84,6 +84,31 @@ export class BoardRepository {
       where: { id: boardId, ...accessibleBoardScope(userId) },
       select: BOARD_SELECT,
     });
+  }
+
+  /**
+   * Есть ли у пользователя доступ к доске — без чтения самой доски.
+   *
+   * Это ровно та булева проверка, которую `findAccessible` выше объявляет ненужной, и
+   * исключение здесь одно, зато настоящее: ВСТАВКА элемента (SLT-20). Вклеить область
+   * видимости в `INSERT` невозможно — сужать нечего, строки ещё не существует. Значит либо
+   * спросить доступ отдельно, либо позволить клиенту писать элементы в чужую доску.
+   *
+   * Окно между этой проверкой и вставкой остаётся, и закрыто оно не здесь, а внешним ключом:
+   * исчезни доска в этот момент, INSERT упадёт на FK, и ElementRepository переведёт это в
+   * доменный отказ. Проверка отвечает за «нельзя», целостность БД — за «уже поздно».
+   *
+   * `select: { id: true }` — из доски не читается ничего, кроме факта её существования под
+   * scope. Метаданные для ответа не нужны, а лишние байты чужих данных в памяти процесса —
+   * ровно то, чего избегает board.access.
+   */
+  async existsAccessible(boardId: string, userId: string): Promise<boolean> {
+    const board = await this.prisma.board.findFirst({
+      where: { id: boardId, ...accessibleBoardScope(userId) },
+      select: { id: true },
+    });
+
+    return board !== null;
   }
 
   /**

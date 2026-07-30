@@ -6,6 +6,7 @@ import { PrismaModule } from './infrastructure/prisma/prisma.module';
 import { RedisModule } from './infrastructure/redis/redis.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { BoardModule } from './modules/board/board.module';
+import { ElementModule } from './modules/element/element.module';
 import { HealthModule } from './modules/health/health.module';
 import { UserModule } from './modules/user/user.module';
 
@@ -33,6 +34,10 @@ export class AppModule {
         // сессии доступны всем модулям, тогда как DI так не работает.
         AuthModule,
         BoardModule,
+        // ElementModule сам импортирует BoardModule (ему нужен BoardService), но в корне он
+        // зарегистрирован явно: иначе его контроллер не попал бы в маршрутизацию — Nest
+        // подхватывает контроллеры только у модулей, которые реально включены в граф.
+        ElementModule,
       ],
     };
   }
