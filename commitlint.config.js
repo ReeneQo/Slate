@@ -8,6 +8,7 @@ module.exports = {
       'always',
       [
         'board',
+        'element',
         'canvas',
         'auth',
         'infra',
