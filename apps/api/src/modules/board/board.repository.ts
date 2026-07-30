@@ -2,14 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@slate/database';
 
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
-import { accessibleBoardScope } from './board.access';
-import { BOARD_SELECT, type BoardEntity } from './entities/board.entity';
 import {
   ELEMENT_ORDER_BY,
   ELEMENT_SELECT,
   type ElementEntity,
   LIVE_ELEMENT_WHERE,
-} from './entities/element.entity';
+} from '../element/entities/element.entity';
+import { accessibleBoardScope } from './board.access';
+import { BOARD_SELECT, type BoardEntity } from './entities/board.entity';
 
 /** Код Prisma для «запись под условие не найдена» (update/delete не нашли строку). */
 const RECORD_NOT_FOUND = 'P2025';

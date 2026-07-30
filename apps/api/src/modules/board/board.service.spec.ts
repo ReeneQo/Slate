@@ -1,10 +1,10 @@
 import { ForbiddenException, HttpStatus, NotFoundException } from '@nestjs/common';
 
+import type { ElementEntity } from '../element/entities/element.entity';
 import type { BoardRepository } from './board.repository';
 import { BoardService } from './board.service';
 import type { CreateBoardDto } from './dto/create-board.dto';
 import type { BoardEntity } from './entities/board.entity';
-import type { ElementEntity } from './entities/element.entity';
 
 const USER_ID = '019fa40d-6841-70ed-8b1d-7c64e6411bd6';
 /** Владелец доски — кто-то другой. Сам сервис этого не знает: за него это знает `where` в репозитории. */

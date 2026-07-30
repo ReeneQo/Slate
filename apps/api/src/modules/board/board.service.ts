@@ -1,9 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 
+import { type ElementDto, toElementDto } from '../element/dto/element.dto';
 import { BoardRepository } from './board.repository';
 import { type BoardDto, toBoardDto } from './dto/board.dto';
 import type { CreateBoardDto } from './dto/create-board.dto';
-import { type ElementDto, toElementDto } from './dto/element.dto';
 import type { UpdateBoardDto } from './dto/update-board.dto';
 
 /**

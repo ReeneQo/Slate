@@ -1,9 +1,9 @@
 import { Prisma } from '@slate/database';
 
 import type { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { ELEMENT_ORDER_BY, ELEMENT_SELECT } from '../element/entities/element.entity';
 import { BoardRepository } from './board.repository';
 import { BOARD_SELECT } from './entities/board.entity';
-import { ELEMENT_ORDER_BY, ELEMENT_SELECT } from './entities/element.entity';
 
 const USER_ID = '019fa40d-6841-70ed-8b1d-7c64e6411bd6';
 const BOARD_ID = '019fa5b1-0000-7000-8000-000000000001';

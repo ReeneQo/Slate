@@ -13,10 +13,10 @@ import {
 
 import { Authorization } from '../../shared/decorators/authorization.decorator';
 import { Authorized } from '../../shared/decorators/authorized.decorator';
+import type { ElementDto } from '../element/dto/element.dto';
 import { BoardService } from './board.service';
 import type { BoardDto } from './dto/board.dto';
 import { CreateBoardDto } from './dto/create-board.dto';
-import type { ElementDto } from './dto/element.dto';
 import { UpdateBoardDto } from './dto/update-board.dto';
 
 /**
