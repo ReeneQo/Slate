@@ -40,6 +40,29 @@ export class BoardService {
     return boards.map((board) => toBoardDto(board));
   }
 
+  /**
+   * Убедиться, что доска доступна пользователю. Ничего не возвращает — вопрос здесь не «дай
+   * данные», а «можно ли».
+   *
+   * Единственный вход для ДРУГИХ модулей: element-модуль (SLT-20) обязан проверить доступ к
+   * доске перед вставкой элемента, а вставка — единственная операция, куда область видимости
+   * не вклеить (строки ещё нет). Все прочие операции над элементом несут scope доски прямо в
+   * своём `where` и в этом методе не нуждаются: вызов «на всякий случай» перед каждой мутацией
+   * был бы лишним round-trip'ом и ложным ощущением, что защита именно в нём.
+   *
+   * Наружу отдан сервис, а не репозиторий (см. board.module): так у element-модуля нет способа
+   * дотянуться до данных доски мимо правил, а отказ формулируется в одном месте — здесь.
+   *
+   * @throws {NotFoundException} доска не существует ИЛИ принадлежит другому пользователю
+   */
+  async assertAccessible(boardId: string, userId: string): Promise<void> {
+    const isAccessible = await this.boardRepository.existsAccessible(boardId, userId);
+
+    if (!isAccessible) {
+      throw boardNotFound();
+    }
+  }
+
   /** @throws {NotFoundException} доска не существует ИЛИ принадлежит другому пользователю */
   async findOne(boardId: string, userId: string): Promise<BoardDto> {
     const board = await this.boardRepository.findAccessible(boardId, userId);
@@ -109,7 +132,12 @@ export class BoardService {
  *
  * Это паттерн на весь блок 3: element-модуль (SLT-20) наследует его — доступ к элементу
  * определяется доступом к его доске, и отказ выглядит так же.
+ *
+ * Экспортируется ради ОДНОГО случая: вставка элемента в доску, которую удалили между проверкой
+ * доступа и записью. Отказ там про доску, а не про элемент, и текст обязан совпасть с этим —
+ * иначе клиент по одному сценарию узнаёт «доски нет», а по другому «элемент не найден», хотя
+ * событие одно. Своя копия строки в element-модуле разошлась бы с этой при первой же правке.
  */
-function boardNotFound(): NotFoundException {
+export function boardNotFound(): NotFoundException {
   return new NotFoundException('Доска не найдена');
 }

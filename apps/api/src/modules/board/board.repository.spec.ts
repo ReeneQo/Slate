@@ -135,6 +135,29 @@ describe('BoardRepository', () => {
     });
   });
 
+  describe('existsAccessible', () => {
+    it('спрашивает только факт существования под тем же access-scope', async () => {
+      const { boardRepository, findFirst } = createDependencies();
+      findFirst.mockResolvedValue({ id: BOARD_ID });
+
+      await expect(boardRepository.existsAccessible(BOARD_ID, USER_ID)).resolves.toBe(true);
+
+      // Ровно тот же where, что у findAccessible: проверка доступа одна на модуль. select сужен
+      // до id — метаданные доски для ответа «можно» не нужны.
+      expect(findFirst).toHaveBeenCalledWith({
+        where: ACCESS_SCOPED_WHERE,
+        select: { id: true },
+      });
+    });
+
+    it('на чужую или отсутствующую доску возвращает false', async () => {
+      const { boardRepository, findFirst } = createDependencies();
+      findFirst.mockResolvedValue(null);
+
+      await expect(boardRepository.existsAccessible(BOARD_ID, USER_ID)).resolves.toBe(false);
+    });
+  });
+
   describe('findElements', () => {
     it('запрашивает только живые элементы (deletedAt IS NULL) в порядке отрисовки', async () => {
       const { boardRepository, findFirst } = createDependencies();

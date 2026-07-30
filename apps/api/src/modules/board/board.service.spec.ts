@@ -66,6 +66,7 @@ function createDependencies() {
   const create = jest.fn() as jest.MockedFunction<BoardRepository['create']>;
   const findAllOwnedBy = jest.fn() as jest.MockedFunction<BoardRepository['findAllOwnedBy']>;
   const findAccessible = jest.fn() as jest.MockedFunction<BoardRepository['findAccessible']>;
+  const existsAccessible = jest.fn() as jest.MockedFunction<BoardRepository['existsAccessible']>;
   const findElements = jest.fn() as jest.MockedFunction<BoardRepository['findElements']>;
   const updateAccessible = jest.fn() as jest.MockedFunction<BoardRepository['updateAccessible']>;
   const deleteAccessible = jest.fn() as jest.MockedFunction<BoardRepository['deleteAccessible']>;
@@ -74,6 +75,7 @@ function createDependencies() {
     create,
     findAllOwnedBy,
     findAccessible,
+    existsAccessible,
     findElements,
     updateAccessible,
     deleteAccessible,
@@ -84,6 +86,7 @@ function createDependencies() {
     create,
     findAllOwnedBy,
     findAccessible,
+    existsAccessible,
     findElements,
     updateAccessible,
     deleteAccessible,
@@ -194,6 +197,32 @@ describe('BoardService', () => {
       // Сообщение обязано совпадать с ответом на чужую доску: разные тексты выдали бы ровно то,
       // что скрывает одинаковый статус.
       await expect(boardService.findOne(BOARD_ID, USER_ID)).rejects.toThrow('Доска не найдена');
+    });
+  });
+
+  describe('assertAccessible', () => {
+    it('молча пропускает владельца', async () => {
+      const { boardService, existsAccessible } = createDependencies();
+      existsAccessible.mockResolvedValue(true);
+
+      await expect(boardService.assertAccessible(BOARD_ID, USER_ID)).resolves.toBeUndefined();
+      expect(existsAccessible).toHaveBeenCalledWith(BOARD_ID, USER_ID);
+    });
+
+    it('на чужую доску отвечает тем же 404 и тем же текстом, что и остальные сценарии', async () => {
+      const { boardService, existsAccessible } = createDependencies();
+      existsAccessible.mockResolvedValue(false);
+
+      // Вход для element-модуля (SLT-20): вставка элемента в чужую доску обязана выглядеть
+      // ровно как обращение к несуществующей. Отдельная формулировка здесь выдала бы, что
+      // доска существует, — то самое, что скрывает единый 404.
+      const error = await boardService
+        .assertAccessible(BOARD_ID, USER_ID)
+        .catch((reason: unknown) => reason);
+
+      expect(error).toBeInstanceOf(NotFoundException);
+      expect(error).not.toBeInstanceOf(ForbiddenException);
+      expect((error as NotFoundException).message).toBe('Доска не найдена');
     });
   });
 
