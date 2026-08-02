@@ -7,6 +7,8 @@ import {
   elementId,
   elementUrl,
   MISSING_BOARD_ID,
+  parseBoardListResponse,
+  parseBoardResponse,
   type SignedUpUser,
   signUp,
   USER_A,
@@ -53,6 +55,10 @@ describe('Board (e2e)', () => {
       const response = await anna.agent.post(BOARDS_URL).send({ title: 'Sprint board' });
 
       expect(response.status).toBe(201);
+      // Контракт из @slate/shared-types — до сверки значений: `toEqual` ниже проверяет, что
+      // сервер сохранил присланное название, а схема — что форма ответа та, которую пакет
+      // обещает клиенту (строгая: `ownerId` или `version` в теле уронили бы её).
+      expect(() => parseBoardResponse(response.body)).not.toThrow();
       expect(response.body).toEqual({
         id: expect.any(String) as string,
         title: 'Sprint board',
@@ -99,7 +105,7 @@ describe('Board (e2e)', () => {
       const foreign = await createBoard(boris.agent, 'Чужая доска');
 
       const response = await anna.agent.get(BOARDS_URL);
-      const ids = (response.body as { id: string }[]).map((board) => board.id);
+      const ids = parseBoardListResponse(response.body).map((board) => board.id);
 
       expect(response.status).toBe(200);
       expect(ids).toEqual([mine.id]);

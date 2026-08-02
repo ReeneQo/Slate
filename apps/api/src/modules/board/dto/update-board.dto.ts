@@ -1,6 +1,10 @@
+import {
+  type AssertExact,
+  BOARD_TITLE_MAX_LENGTH,
+  type ExactKeys,
+  type UpdateBoardInput,
+} from '@slate/shared-types';
 import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
-
-import { BOARD_TITLE_MAX_LENGTH } from '../board.constants';
 
 /**
  * Вход переименования доски.
@@ -19,7 +23,7 @@ import { BOARD_TITLE_MAX_LENGTH } from '../board.constants';
  * «обновление = частичное создание» здесь ложная: у создания title опционален из-за дефолта
  * БД, а у обновления обязателен по смыслу операции.
  */
-export class UpdateBoardDto {
+export class UpdateBoardDto implements UpdateBoardInput {
   @IsString()
   @IsNotEmpty({ message: 'Название не может быть пустым' })
   @MaxLength(BOARD_TITLE_MAX_LENGTH, {
@@ -27,3 +31,8 @@ export class UpdateBoardDto {
   })
   title!: string;
 }
+
+/** Сверка на лишние поля класса — см. пояснение в create-board.dto. */
+export type _UpdateBoardDtoKeys = AssertExact<
+  ExactKeys<keyof UpdateBoardDto, keyof UpdateBoardInput>
+>;

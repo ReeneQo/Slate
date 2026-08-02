@@ -1,3 +1,14 @@
-// Общие типы между apps/api и apps/web: элементы холста, DTO, контракты API.
-// Наполняется по мере появления доменных сущностей.
-export * from './contracts';
+/**
+ * Публичная поверхность @slate/shared-types — единственный источник правды о контрактах между
+ * apps/api и apps/web: границы значений, zod-схемы входов и ответов, выведенные из них типы.
+ *
+ * Плоский реэкспорт без промежуточных баррелей: пакет маленький, а лишний уровень (`./board`,
+ * `./element`) добавил бы только шанс на циклический импорт.
+ */
+export * from './board/board.constants.js';
+export * from './board/board.contracts.js';
+export * from './element/element.constants.js';
+export * from './element/element.contracts.js';
+export * from './element/element.types.js';
+export * from './element/element-data.schema.js';
+export * from './exact-keys.js';

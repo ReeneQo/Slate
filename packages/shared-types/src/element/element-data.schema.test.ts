@@ -1,9 +1,15 @@
-import { parseElementData } from './element-data.schema';
+import { describe, expect, it } from 'vitest';
+
+import { parseElementData } from './element-data.schema.js';
 
 /**
  * Геометрия — единственная часть элемента, которую не проверяет ни БД (jsonb хранит что угодно),
  * ни class-validator (форма зависит от типа фигуры). Значит, кроме этих тестов, её не проверяет
  * никто.
+ *
+ * Тесты переехали сюда вместе со схемой (SLT-23) и сменили раннер на vitest: жить им положено
+ * рядом с проверяемым кодом, а не в приложении, которое этот код всего лишь импортирует.
+ * Глобали (`describe`/`it`) импортируются явно — так пакету не нужен конфиг vitest вовсе.
  */
 describe('parseElementData', () => {
   describe('rect и ellipse', () => {

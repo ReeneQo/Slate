@@ -1,4 +1,9 @@
 {
+  // Typecheck исходников (noEmit). Реальный эмит делают tsconfig.esm.json и tsconfig.cjs.json.
+  //
+  // moduleResolution=Bundler — как в apps/api и apps/web. Это не «за компанию»: exports пакета
+  // отдаёт типы прямо из ./src, то есть эти файлы читают компиляторы приложений, и резолвер
+  // здесь обязан вести себя так же, как у них.
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "target": "ES2022",
@@ -9,5 +14,5 @@
     "declaration": false
   },
   "include": ["src"],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "dist"]
 }

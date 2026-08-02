@@ -17,9 +17,15 @@
     },
     "lint": {},
     "typecheck": {
+      // ^build здесь НЕ нужен: @slate/shared-types отдаёт типы прямо из src (условие "types" в
+      // exports), поэтому проверка типов работает в чистом клоне, до всякой сборки.
       "dependsOn": ["@slate/database#db:generate"]
     },
-    "test": {},
+    "test": {
+      // А вот раннерам нужен собранный dist: они исполняют код, а не читают типы, и
+      // @slate/shared-types резолвится у них через условие "require" (jest) / "import" (vitest).
+      "dependsOn": ["^build", "@slate/database#db:generate"]
+    },
     "test:e2e": {
       // Задача НЕ входит в `test` и ни от чего не зависит по графу: `turbo run test` обязан
       // оставаться быстрым и работать там, где Docker недоступен вовсе.

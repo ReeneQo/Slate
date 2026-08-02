@@ -1,3 +1,12 @@
+import {
+  boardListResponseSchema,
+  type BoardResponse,
+  boardResponseSchema,
+  elementListResponseSchema,
+  type ElementResponse,
+  elementResponseSchema,
+} from '@slate/shared-types';
+
 import type { TestAgent, TestApp } from './test-app';
 
 /**
@@ -60,30 +69,41 @@ export const USER_B: TestUser = {
   password: 'another horse battery',
 };
 
-/** Форма ответа board-эндпоинтов. Записана здесь, чтобы `res.body` не расползался как any. */
-export interface BoardResponse {
-  id: string;
-  title: string;
-  createdAt: string;
-  updatedAt: string;
+/**
+ * Формы ответов приходят из @slate/shared-types, и это не экономия на объявлениях.
+ *
+ * Раньше здесь лежали свои интерфейсы — то есть тест сверял ответ с ОЖИДАНИЯМИ ТЕСТА, а не с
+ * контрактом, который обещан клиенту. Расхождение между обещанным и отданным такой тест
+ * заметить не мог в принципе: обе стороны правились одним человеком в один заход.
+ *
+ * Здесь же проходит вторая половина связки «схема ↔ бэкенд». Входы привязаны к контракту
+ * статически (DTO объявлены через `implements`), а выходы так привязать нельзя: `createdAt` —
+ * `Date` в памяти сервера и строка на проводе. Поэтому выходы проверяются РАНТАЙМОМ, на живых
+ * телах ответов, и падение здесь означает ровно одно: сервер отдаёт не то, что обещает пакет.
+ */
+export type { BoardResponse, ElementResponse };
+
+/**
+ * Разбор тела ответа схемой контракта.
+ *
+ * `parse`, а не `safeParse`: тело, не прошедшее схему, — это провал теста, и упасть он должен
+ * сразу и с перечнем расхождений от zod, а не через десять строк на `undefined.id`.
+ * Возвращённое значение типизировано, так что дальше `as` в тестах не нужен вовсе.
+ */
+export function parseBoardResponse(body: unknown): BoardResponse {
+  return boardResponseSchema.parse(body);
 }
 
-export interface ElementResponse {
-  id: string;
-  boardId: string;
-  type: string;
-  x: number;
-  y: number;
-  angle: number;
-  opacity: number;
-  stroke: string;
-  fill: string | null;
-  strokeWidth: number;
-  seed: number;
-  order: number;
-  data: unknown;
-  createdAt: string;
-  updatedAt: string;
+export function parseBoardListResponse(body: unknown): BoardResponse[] {
+  return boardListResponseSchema.parse(body);
+}
+
+export function parseElementResponse(body: unknown): ElementResponse {
+  return elementResponseSchema.parse(body);
+}
+
+export function parseElementListResponse(body: unknown): ElementResponse[] {
+  return elementListResponseSchema.parse(body);
 }
 
 /** Пользователь с живой сессией: агент хранит куку, userId нужен для проверок владения в БД. */
@@ -124,7 +144,9 @@ export async function createBoard(
     throw new Error(`Доска не создана (${response.status}): ${JSON.stringify(response.body)}`);
   }
 
-  return response.body as BoardResponse;
+  // Разбор схемой прямо в фикстуре: доски создаются почти в каждом сценарии, так что контракт
+  // ответа проверяется десятки раз без единой строчки в самих тестах.
+  return parseBoardResponse(response.body);
 }
 
 /**

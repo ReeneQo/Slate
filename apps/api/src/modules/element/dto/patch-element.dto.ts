@@ -1,4 +1,14 @@
 import {
+  type AssertExact,
+  COLOR_MAX_LENGTH,
+  type ExactKeys,
+  OPACITY_MAX,
+  OPACITY_MIN,
+  type PatchElementInput,
+  STROKE_WIDTH_MAX,
+  STROKE_WIDTH_MIN,
+} from '@slate/shared-types';
+import {
   IsNotEmpty,
   IsNumber,
   IsObject,
@@ -8,14 +18,6 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-
-import {
-  COLOR_MAX_LENGTH,
-  OPACITY_MAX,
-  OPACITY_MIN,
-  STROKE_WIDTH_MAX,
-  STROKE_WIDTH_MIN,
-} from '../element.constants';
 
 /**
  * Вход `PATCH /elements/:id` — частичное обновление: меняется только присланное.
@@ -42,8 +44,12 @@ import {
  * Проверки «прислали хотя бы одно поле» на уровне класса нет намеренно — её делает сервис
  * (см. element.service). Пустой PATCH обязан быть ошибкой: он ничего не меняет, но инкрементит
  * version и трогает updatedAt, то есть тихо портит данные вместо честного 400.
+ *
+ * `implements PatchElementInput` — без `Omit`, в отличие от UpsertElementDto: в PATCH `type` не
+ * приходит, дискриминировать геометрию нечем, и `data` объявлена `unknown` уже в самом
+ * контракте. Форму проверяет сервис — по типу, прочитанному из БД.
  */
-export class PatchElementDto {
+export class PatchElementDto implements PatchElementInput {
   @IsOptional()
   @IsNumber()
   x?: number;
@@ -97,3 +103,8 @@ export class PatchElementDto {
   @IsObject()
   data?: unknown;
 }
+
+/** Сверка на лишние поля класса — см. пояснение в create-board.dto. */
+export type _PatchElementDtoKeys = AssertExact<
+  ExactKeys<keyof PatchElementDto, keyof PatchElementInput>
+>;
