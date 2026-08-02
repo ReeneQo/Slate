@@ -4,11 +4,12 @@ import {
   createBoard,
   elementBody,
   elementId,
-  type ElementResponse,
   elementUrl,
   LINE_DATA,
   MISSING_BOARD_ID,
   MISSING_ELEMENT_ID,
+  parseElementListResponse,
+  parseElementResponse,
   type SignedUpUser,
   signUp,
   USER_A,
@@ -52,7 +53,9 @@ describe('Element (e2e)', () => {
   async function liveElementIds(): Promise<string[]> {
     const response = await anna.agent.get(boardElementsUrl(board.id));
 
-    return (response.body as ElementResponse[]).map((element) => element.id);
+    // Разбор схемой, а не `as`: список содержимого доски — то, что рисует холст, и его форма
+    // обязана совпадать с контрактом при КАЖДОМ обращении, а не только в тесте про создание.
+    return parseElementListResponse(response.body).map((element) => element.id);
   }
 
   describe('PUT /api/elements/:id — создание', () => {
@@ -62,6 +65,11 @@ describe('Element (e2e)', () => {
       // 201, а не 200: ресурс действительно создан (RFC 9110 §9.3.4). Для autosave это
       // бесплатное различение «долетело впервые» и «обновилось».
       expect(response.status).toBe(201);
+      // Сначала контракт (форма, типы, отсутствие лишних полей — schema строгая), потом
+      // значения. Порядок важен: `toEqual` ниже проверяет, что сервер записал именно то, что
+      // прислали, а вот про утечку `version` или `deletedAt` он сказал бы то же самое, что и
+      // про любое другое расхождение, — «объекты не равны».
+      expect(() => parseElementResponse(response.body)).not.toThrow();
       expect(response.body).toEqual({
         id: ELEMENT_ID,
         boardId: board.id,
