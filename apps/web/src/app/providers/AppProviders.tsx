@@ -1,11 +1,25 @@
 import type { ReactElement, ReactNode } from 'react';
 import { BrowserRouter } from 'react-router';
 
+import { useAuthBootstrap } from '@/features/auth';
+
 /**
- * Корневые провайдеры приложения. Пока это только роутер (декларативный BrowserRouter, не
- * data-API-роутер), но сюда же лягут будущие провайдеры (react-query — SLT-26): App остаётся
- * тонким, а порядок оборачивания живёт в одном месте, а не расползается по дереву.
+ * Запускает bootstrap auth (восстановление сессии + подключение onUnauthorized). Отдельный
+ * компонент, потому что хук обязан жить внутри React-дерева.
+ */
+function AuthBootstrap({ children }: { children: ReactNode }): ReactElement {
+  useAuthBootstrap();
+  return <>{children}</>;
+}
+
+/**
+ * Корневые провайдеры приложения: роутер (декларативный BrowserRouter) + bootstrap auth. Сюда
+ * же лягут будущие провайдеры (react-query — SLT-26): порядок оборачивания живёт в одном месте.
  */
 export function AppProviders({ children }: { children: ReactNode }): ReactElement {
-  return <BrowserRouter>{children}</BrowserRouter>;
+  return (
+    <BrowserRouter>
+      <AuthBootstrap>{children}</AuthBootstrap>
+    </BrowserRouter>
+  );
 }
