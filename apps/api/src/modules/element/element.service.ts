@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { ElementType } from '@slate/database';
+import { type ElementData, parseElementData } from '@slate/shared-types';
 
 import { boardNotFound, BoardService } from '../board/board.service';
 import { type ElementDto, toElementDto } from './dto/element.dto';
@@ -15,7 +16,6 @@ import {
   type PatchElementData,
   type ReplaceElementData,
 } from './element.repository';
-import { type ElementData, parseElementData } from './element-data.schema';
 
 /**
  * Результат upsert'а. Флаг нужен ровно одному месту — контроллеру, который выбирает между 201

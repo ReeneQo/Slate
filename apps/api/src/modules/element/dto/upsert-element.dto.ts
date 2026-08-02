@@ -1,5 +1,15 @@
 import { ElementType } from '@slate/database';
 import {
+  type AssertExact,
+  COLOR_MAX_LENGTH,
+  type ExactKeys,
+  OPACITY_MAX,
+  OPACITY_MIN,
+  STROKE_WIDTH_MAX,
+  STROKE_WIDTH_MIN,
+  type UpsertElementInput,
+} from '@slate/shared-types';
+import {
   IsEnum,
   IsInt,
   IsNotEmpty,
@@ -12,14 +22,6 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-
-import {
-  COLOR_MAX_LENGTH,
-  OPACITY_MAX,
-  OPACITY_MIN,
-  STROKE_WIDTH_MAX,
-  STROKE_WIDTH_MIN,
-} from '../element.constants';
 
 /**
  * Вход `PUT /elements/:id` — ПОЛНОЕ тело элемента.
@@ -41,8 +43,20 @@ import {
  * `boardId` в теле, а не в URL, — следствие плоского маршрута `/elements/:id` (см. контроллер).
  * Клиенту он известен: фигура рисуется на конкретной доске. Проверку доступа к ЭТОЙ доске
  * делает сервис — сам по себе присланный boardId никаких прав не даёт.
+ *
+ * Про `implements Omit<UpsertElementInput, 'data'> & { data: unknown }`. В общем контракте
+ * `upsertElementSchema` — дискриминированный союз: форма `data` там зависит от `type`, и фронт
+ * получает точный тип. Здесь `data` обязана остаться `unknown`, и это не поблажка: до разбора
+ * схемой в теле лежит произвольный JSON, а объявить его геометрией прямоугольника значило бы
+ * соврать компилятору ровно там, где данные ещё не проверены. Проверку делает сервис
+ * (`parseElementData`), и только её результат имеет тип `ElementData`.
+ *
+ * Остальные поля при этом сверяются с контрактом поимённо. В том числе `type`: он объявлен
+ * enum'ом из @slate/database, а контракт требует свой union из трёх литералов, — так расхождение
+ * между схемой БД и контрактом ловится компилятором в ОБЕ стороны (лишнее значение в enum'е и
+ * лишнее в контракте одинаково ломают сборку).
  */
-export class UpsertElementDto {
+export class UpsertElementDto implements Omit<UpsertElementInput, 'data'>, HasRawData {
   /** UUID без указания версии: id — uuid v7, `version: '4'` отверг бы их все (как в SLT-19). */
   @IsUUID()
   boardId!: string;
@@ -107,8 +121,22 @@ export class UpsertElementDto {
 
   /**
    * Геометрия. Здесь проверяется только то, что это объект: настоящую форму задаёт `type`, а
-   * дискриминированная проверка живёт в element-data.schema — одна на PUT и PATCH.
+   * дискриминированная проверка живёт в @slate/shared-types — одна на PUT и PATCH.
    */
   @IsObject()
   data!: unknown;
 }
+
+/**
+ * Требование «поле `data` есть, но его содержимое ещё не разобрано». Отдельный интерфейс, а не
+ * второй `implements Omit<...>`: `Omit` выбросил бы `data` вместе с типом, и класс мог бы
+ * потерять поле целиком, не поссорившись с компилятором.
+ */
+interface HasRawData {
+  data: unknown;
+}
+
+/** Сверка на лишние поля класса — см. пояснение в create-board.dto. */
+export type _UpsertElementDtoKeys = AssertExact<
+  ExactKeys<keyof UpsertElementDto, keyof UpsertElementInput>
+>;

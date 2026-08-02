@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { type ElementType, Prisma } from '@slate/database';
+import type { ElementData } from '@slate/shared-types';
 
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { accessibleElementScope } from './element.access';
-import type { ElementData } from './element-data.schema';
 import { ELEMENT_SELECT, type ElementEntity, LIVE_ELEMENT_WHERE } from './entities/element.entity';
 
 /** Коды Prisma, у которых здесь есть доменное значение. Выше по стеку про них знать не положено. */
