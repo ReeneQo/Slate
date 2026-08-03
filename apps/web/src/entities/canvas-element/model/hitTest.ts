@@ -17,14 +17,17 @@ import type { CanvasElement } from './types';
  */
 export function hitTestElement(element: CanvasElement, point: Point, tolerance = 0): boolean {
   switch (element.type) {
-    case 'rect':
-      return isInsideRect(point, element.x, element.y, element.width, element.height, tolerance);
+    case 'rect': {
+      const { width, height } = element.data;
+      return isInsideRect(point, element.x, element.y, width, height, tolerance);
+    }
 
     case 'ellipse': {
-      const rx = Math.abs(element.width) / 2;
-      const ry = Math.abs(element.height) / 2;
-      const cx = element.x + element.width / 2;
-      const cy = element.y + element.height / 2;
+      const { width, height } = element.data;
+      const rx = Math.abs(width) / 2;
+      const ry = Math.abs(height) / 2;
+      const cx = element.x + width / 2;
+      const cy = element.y + height / 2;
       return isInsideEllipse(point, cx, cy, rx, ry, tolerance);
     }
 
@@ -32,7 +35,7 @@ export function hitTestElement(element: CanvasElement, point: Point, tolerance =
       // Линия «тонкая»: попаданием считаем близость к любому её отрезку.
       // Порог = половина толщины линии + общая слабина.
       const threshold = tolerance + element.strokeWidth / 2;
-      return isNearPolyline(point, element.x, element.y, element.points, threshold);
+      return isNearPolyline(point, element.x, element.y, element.data.points, threshold);
     }
 
     default:

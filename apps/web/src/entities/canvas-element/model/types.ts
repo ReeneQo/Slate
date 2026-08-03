@@ -1,81 +1,81 @@
 /**
- * Контракт элемента холста. ВАЖНО: это будущий контракт с бэком (этап 2 —
- * переедет в packages/shared-types и будет сохраняться в БД) и единица истории
- * (будущие undo/redo). Поэтому:
- *  - только JSON-сериализуемые поля (примитивы, массивы чисел);
- *  - НИКАКИХ Konva-инстансов, функций, классов, ссылок на DOM.
+ * Доменная модель элемента холста. Теперь это НЕ самостоятельный контракт, а надстройка над
+ * серверным контрактом из @slate/shared-types (SLT-27): общие поля берём ОДНИМ типом из пакета,
+ * чтобы клиент и сервер не описывали одну фигуру двумя способами и не разъезжались молча.
+ *
+ * `CanvasElement` = серверный `ElementResponse` МИНУС поля, которых у клиента в модели нет:
+ *  - `boardId` — известен из роута (`/boards/:id`), в create прокидывается снаружи (SLT-27, Р8);
+ *  - `createdAt` / `updatedAt` — серверные метаданные, рендеру не нужны.
+ * Эти поля не «эфемерны на клиенте» — они просто живут не в модели фигуры (boardId — контекст
+ * доски, даты — забота сервера). Отдельного слоя клиентских эфемерных полей у закоммиченной
+ * фигуры нет: черновик (`DraftElement`), выделение и вьюпорт живут в editor-сторе, не здесь.
+ *
+ * Как и раньше — только JSON-сериализуемые поля: никаких Konva-инстансов, функций, ссылок на DOM.
  */
 
-/** Виды фигур этапа 1. Союз расширяется под будущие 'text' | 'arrow' | 'freedraw'. */
-export type ElementType = 'rect' | 'ellipse' | 'line';
+import type { ElementData, ElementResponse, ElementType } from '@slate/shared-types';
+
+export type { ElementType };
 
 /** Инструмент тулбара: курсор-выделение + по инструменту на каждый вид фигуры. */
 export type ToolType = 'select' | ElementType;
 
 /**
- * Общие поля всех элементов.
- *
- * angle и seed заложены сейчас «на вырост», чтобы не мигрировать контракт позже:
- *  - angle — поворот в градусах (как rotation у Konva). Этап 1 не вращает, всегда 0.
- *  - seed — зерно для будущего «рукотворного» рендера (rough.js). Этап 1 не использует.
- *
- * Координаты x/y — в координатах холста (не экранных), x/y = левый верхний угол.
- */
-export interface BaseElement {
-  id: string;
-  type: ElementType;
-  x: number;
-  y: number;
-  angle: number;
-  opacity: number;
-  stroke: string;
-  fill: string;
-  strokeWidth: number;
-  seed: number;
-}
-
-/** Прямоугольник/эллипс делят одну геометрию — прямоугольную рамку. */
-export interface RectElement extends BaseElement {
-  type: 'rect';
-  width: number;
-  height: number;
-}
-
-export interface EllipseElement extends BaseElement {
-  type: 'ellipse';
-  width: number;
-  height: number;
-}
-
-/**
- * Линия как массив точек [x1,y1,x2,y2,...], координаты ОТНОСИТЕЛЬНО x/y элемента
- * (первая точка — [0,0]). Этап 1 — две точки, но модель сразу готова к freedraw
- * (та же points с N точками) и не потребует миграции.
- */
-export interface LineElement extends BaseElement {
-  type: 'line';
-  points: number[];
-}
-
-/** Дискриминированный союз по `type`. Единственная «точка правды» о фигуре. */
-export type CanvasElement = RectElement | EllipseElement | LineElement;
-
-/**
- * Дистрибутивный Omit: обычный Omit<Union, K> схлопывает дискриминированный союз
- * и теряет сужение по `type`. Эта версия применяет Omit к каждому члену союза.
+ * Дистрибутивный Omit: обычный Omit<Union, K> схлопывает дискриминированный союз и теряет
+ * сужение по `type`. Эта версия применяет Omit к каждому члену союза по отдельности.
  */
 export type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
 
-/**
- * Черновик — фигура, которую сейчас тащим мышью. id ещё нет: он рождается только
- * в момент коммита (mouseup) в экшене стора. Превью рисуется из черновика.
- */
-export type DraftElement = DistributiveOmit<CanvasElement, 'id'>;
+/** Поля, которые сервер знает, а модель фигуры на клиенте не держит (см. шапку файла). */
+type ServerOnlyFields = 'boardId' | 'createdAt' | 'updatedAt';
 
 /**
- * Документ доски. Версия — на уровне документа, не элемента. elements — словарь
- * (точечные апдейты в реалтайме дешевле массива), elementIds — порядок отрисовки
- * (z-index). Инвариант: elements и elementIds всегда синхронны.
+ * Элемент холста на клиенте — серверная фигура без серверного контекста. Геометрия лежит в
+ * `data` (`{ width, height }` для rect/ellipse, `{ points }` для line) — ровно как на бэке,
+ * поэтому маппинг «клиент → тело PUT» это по сути добавление boardId, без переукладки полей.
+ *
+ * ВНИМАНИЕ про `angle`: серверный контракт задаёт его в РАДИАНАХ (element.contracts.ts), а
+ * ElementShape сейчас скармливает значение Konva как `rotation` (ГРАДУСЫ). Этап 1 не вращает —
+ * angle всегда 0, где радианы и градусы совпадают, поэтому расхождение латентно и не проявляется.
+ * Когда появится вращение (Transformer, rotate), единицу надо свести на границе рендера. См.
+ * развилку в описании SLT-27.
+ */
+export type CanvasElement = DistributiveOmit<ElementResponse, ServerOnlyFields>;
+
+/** Сужения союза по типу — публичная поверхность для потребителей (hit-test, тесты). */
+export type RectElement = Extract<CanvasElement, { type: 'rect' }>;
+export type EllipseElement = Extract<CanvasElement, { type: 'ellipse' }>;
+export type LineElement = Extract<CanvasElement, { type: 'line' }>;
+
+/** Общие (не зависящие от вида фигуры) поля. Держим как псевдоним — источник правды один. */
+export type BaseElement = Pick<
+  CanvasElement,
+  | 'id'
+  | 'type'
+  | 'x'
+  | 'y'
+  | 'angle'
+  | 'opacity'
+  | 'stroke'
+  | 'fill'
+  | 'strokeWidth'
+  | 'seed'
+  | 'order'
+>;
+
+export type { ElementData };
+
+/**
+ * Черновик — фигура, которую сейчас тащим мышью. Нет `id` (родится при коммите) и нет `order`
+ * (z-index присваивается там же, при добавлении в документ). Превью рисуется из черновика.
+ */
+export type DraftElement = DistributiveOmit<CanvasElement, 'id' | 'order'>;
+
+/**
+ * Документ доски. `elements` — словарь (точечные апдейты дешевле массива), `elementIds` — порядок
+ * отрисовки (z-index). Инвариант: `elements` и `elementIds` всегда синхронны. Серверный `order`
+ * дублирует z-index числом (нужен, потому что PUT его требует), но источник порядка отрисовки —
+ * по-прежнему `elementIds`; при гидрации массив восстанавливается сортировкой по `order`.
  */
 export interface CanvasDocument {
   schemaVersion: number;

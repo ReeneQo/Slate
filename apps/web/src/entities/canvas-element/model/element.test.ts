@@ -20,8 +20,7 @@ describe('createDraft', () => {
       type: 'rect',
       x: 10,
       y: 20,
-      width: 0,
-      height: 0,
+      data: { width: 0, height: 0 },
       angle: 0,
       ...DEFAULT_STYLE,
     });
@@ -32,7 +31,7 @@ describe('createDraft', () => {
     const draft = createDraft('line', { x: 5, y: 5 });
     expect(draft.type).toBe('line');
     if (draft.type === 'line') {
-      expect(draft.points).toEqual([0, 0, 0, 0]);
+      expect(draft.data.points).toEqual([0, 0, 0, 0]);
     }
   });
 
@@ -47,15 +46,15 @@ describe('updateDraftGeometry', () => {
     const draft = createDraft('rect', { x: 100, y: 100 });
     const dragged = updateDraftGeometry(draft, { x: 60, y: 140 });
     if (dragged.type === 'line') throw new Error('ожидался rect');
-    expect(dragged.width).toBe(-40);
-    expect(dragged.height).toBe(40);
+    expect(dragged.data.width).toBe(-40);
+    expect(dragged.data.height).toBe(40);
   });
 
   it('line: точки относительно старта', () => {
     const draft = createDraft('line', { x: 100, y: 100 });
     const dragged = updateDraftGeometry(draft, { x: 130, y: 90 });
     if (dragged.type !== 'line') throw new Error('ожидалась line');
-    expect(dragged.points).toEqual([0, 0, 30, -10]);
+    expect(dragged.data.points).toEqual([0, 0, 30, -10]);
   });
 });
 
@@ -67,7 +66,7 @@ describe('normalizeBounds', () => {
     });
     const normalized = normalizeBounds(draft);
     if (normalized.type === 'line') throw new Error('ожидался rect');
-    expect(normalized).toMatchObject({ x: 60, y: 100, width: 40, height: 40 });
+    expect(normalized).toMatchObject({ x: 60, y: 100, data: { width: 40, height: 40 } });
   });
 
   it('линию не трогает (точки относительные)', () => {

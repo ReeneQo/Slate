@@ -11,11 +11,18 @@ const base = {
   fill: 'transparent',
   strokeWidth: 2,
   seed: 1,
+  order: 0,
 } as const;
 
-const rect: RectElement = { ...base, type: 'rect', x: 10, y: 10, width: 100, height: 50 };
-const ellipse: EllipseElement = { ...base, type: 'ellipse', x: 0, y: 0, width: 100, height: 100 };
-const line: LineElement = { ...base, type: 'line', x: 0, y: 0, points: [0, 0, 100, 0] };
+const rect: RectElement = { ...base, type: 'rect', x: 10, y: 10, data: { width: 100, height: 50 } };
+const ellipse: EllipseElement = {
+  ...base,
+  type: 'ellipse',
+  x: 0,
+  y: 0,
+  data: { width: 100, height: 100 },
+};
+const line: LineElement = { ...base, type: 'line', x: 0, y: 0, data: { points: [0, 0, 100, 0] } };
 
 describe('hitTestElement — rect', () => {
   it('попадает внутрь рамки даже при прозрачной заливке', () => {
