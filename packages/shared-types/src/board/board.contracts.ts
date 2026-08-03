@@ -76,3 +76,10 @@ export type BoardResponse = z.infer<typeof boardResponseSchema>;
 
 /** Список досок: `GET /boards`. Одно определение на клиента и на тесты — как и у элементов. */
 export const boardListResponseSchema = z.array(boardResponseSchema);
+
+/**
+ * Тип списка, выведенный из схемы (`z.infer`) — как и у остальных контрактов пакета. Клиент
+ * (SLT-26) типизирует им ответ `getBoards`, тесты сверяют им же реальное тело: одно определение
+ * не даёт типу и рантайм-проверке разойтись.
+ */
+export type BoardListResponse = z.infer<typeof boardListResponseSchema>;
