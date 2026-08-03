@@ -5,7 +5,7 @@ import { LoginForm, RegisterForm, RequireAuth, RequireGuest } from '@/features/a
 import { ROUTES } from '@/shared/config';
 import { BoardsDashboard } from '@/widgets/boards-dashboard';
 
-import { BoardCanvasStub } from './BoardCanvasStub';
+import { BoardCanvasRoute } from './BoardCanvasRoute';
 
 /**
  * Дерево роутов — декларативный react-router (Routes/Route), НЕ data-API-роутер. Пути из общего
@@ -13,7 +13,7 @@ import { BoardCanvasStub } from './BoardCanvasStub';
  *
  * Защита — по СТАТУСУ auth-стора (гварды), а не императивным navigate: приватная зона под
  * RequireAuth (аноним → login), а login/register под RequireGuest (залогиненный → home).
- * Приватные роуты: home — дашборд досок (SLT-26); `/boards/:id` — холст (заглушка, SLT-27).
+ * Приватные роуты: home — дашборд досок (SLT-26); `/boards/:id` — холст с синхронизацией (SLT-27).
  */
 export function AppRoutes(): ReactElement {
   return (
@@ -30,7 +30,7 @@ export function AppRoutes(): ReactElement {
         path={ROUTES.board}
         element={
           <RequireAuth>
-            <BoardCanvasStub />
+            <BoardCanvasRoute />
           </RequireAuth>
         }
       />

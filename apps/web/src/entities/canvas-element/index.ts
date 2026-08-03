@@ -1,4 +1,11 @@
 export {
+  deleteElement,
+  ELEMENT_ENDPOINTS,
+  getBoardElements,
+  patchElement,
+  putElement,
+} from './api';
+export {
   type DocumentChange,
   type DocumentStore,
   type ElementPatch,
