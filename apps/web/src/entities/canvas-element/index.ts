@@ -1,4 +1,17 @@
-export { type DocumentStore, type ElementPatch, useDocumentStore } from './model/document.store';
+export {
+  deleteElement,
+  ELEMENT_ENDPOINTS,
+  getBoardElements,
+  patchElement,
+  putElement,
+} from './api';
+export {
+  type DocumentChange,
+  type DocumentStore,
+  type ElementPatch,
+  setDocumentChangeListener,
+  useDocumentStore,
+} from './model/document.store';
 export {
   createDraft,
   DEFAULT_STYLE,

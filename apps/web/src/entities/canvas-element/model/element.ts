@@ -30,7 +30,7 @@ function makeSeed(): number {
 
 /**
  * Черновик новой фигуры в точке старта. Без id (родится при коммите). Геометрия
- * нулевая — наполняется в updateDraftGeometry по мере перетаскивания мыши.
+ * нулевая (в `data`) — наполняется в updateDraftGeometry по мере перетаскивания мыши.
  */
 export function createDraft(type: ElementType, start: Point): DraftElement {
   const common = {
@@ -42,9 +42,9 @@ export function createDraft(type: ElementType, start: Point): DraftElement {
   };
 
   if (type === 'line') {
-    return { type: 'line', ...common, points: [0, 0, 0, 0] };
+    return { type: 'line', ...common, data: { points: [0, 0, 0, 0] } };
   }
-  return { type, ...common, width: 0, height: 0 };
+  return { type, ...common, data: { width: 0, height: 0 } };
 }
 
 /**
@@ -54,9 +54,9 @@ export function createDraft(type: ElementType, start: Point): DraftElement {
  */
 export function updateDraftGeometry(draft: DraftElement, current: Point): DraftElement {
   if (draft.type === 'line') {
-    return { ...draft, points: [0, 0, current.x - draft.x, current.y - draft.y] };
+    return { ...draft, data: { points: [0, 0, current.x - draft.x, current.y - draft.y] } };
   }
-  return { ...draft, width: current.x - draft.x, height: current.y - draft.y };
+  return { ...draft, data: { width: current.x - draft.x, height: current.y - draft.y } };
 }
 
 /**
@@ -67,13 +67,13 @@ export function updateDraftGeometry(draft: DraftElement, current: Point): DraftE
 export function normalizeBounds(draft: DraftElement): DraftElement {
   if (draft.type === 'line') return draft;
 
-  const { x, y, width, height } = draft;
+  const { x, y } = draft;
+  const { width, height } = draft.data;
   return {
     ...draft,
     x: width < 0 ? x + width : x,
     y: height < 0 ? y + height : y,
-    width: Math.abs(width),
-    height: Math.abs(height),
+    data: { width: Math.abs(width), height: Math.abs(height) },
   };
 }
 
@@ -85,8 +85,10 @@ export function isCommittable(draft: DraftElement): boolean {
   if (draft.type === 'line') {
     // Дефолты в деструктуризации удовлетворяют noUncheckedIndexedAccess
     // и безопасны: линия всегда имеет минимум две точки.
-    const [x1 = 0, y1 = 0, x2 = 0, y2 = 0] = draft.points;
+    const [x1 = 0, y1 = 0, x2 = 0, y2 = 0] = draft.data.points;
     return Math.abs(x2 - x1) >= MIN_COMMIT_SIZE || Math.abs(y2 - y1) >= MIN_COMMIT_SIZE;
   }
-  return Math.abs(draft.width) >= MIN_COMMIT_SIZE && Math.abs(draft.height) >= MIN_COMMIT_SIZE;
+  return (
+    Math.abs(draft.data.width) >= MIN_COMMIT_SIZE && Math.abs(draft.data.height) >= MIN_COMMIT_SIZE
+  );
 }

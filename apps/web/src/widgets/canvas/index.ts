@@ -1,1 +1,1 @@
-export { CanvasStage } from './ui/CanvasStage';
+export { BoardCanvas } from './ui/BoardCanvas';

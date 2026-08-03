@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useDocumentStore } from './document.store';
+import { type DocumentChange, setDocumentChangeListener, useDocumentStore } from './document.store';
 import { createDraft, updateDraftGeometry } from './element';
+import type { CanvasElement } from './types';
 
 /** Готовый к коммиту черновик прямоугольника. */
 function rectDraft() {
@@ -25,6 +26,10 @@ describe('useDocumentStore', () => {
     useDocumentStore.getState().reset();
   });
 
+  afterEach(() => {
+    setDocumentChangeListener(null);
+  });
+
   it('commitElement добавляет элемент в elements и elementIds синхронно', () => {
     const id = commit();
 
@@ -38,8 +43,21 @@ describe('useDocumentStore', () => {
     const id = commit();
 
     const element = useDocumentStore.getState().elements[id];
-    expect(element).toMatchObject({ x: 60, y: 100, width: 40, height: 40 });
+    expect(element).toMatchObject({ x: 60, y: 100, data: { width: 40, height: 40 } });
     expect(element?.id).toBeTruthy();
+  });
+
+  it('commitElement присваивает id формата uuid v7 и растущий order', () => {
+    const first = commit();
+    const second = commit();
+
+    const { elements } = useDocumentStore.getState();
+    // uuid v7: третья группа начинается с «7» (версия).
+    expect(elements[first]?.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    // order монотонно растёт — новая фигура сверху.
+    expect(elements[second]!.order).toBeGreaterThan(elements[first]!.order);
   });
 
   it('закоммиченный элемент JSON-сериализуем (уедет в БД)', () => {
@@ -93,5 +111,103 @@ describe('useDocumentStore', () => {
     const { elementIds, elements } = useDocumentStore.getState();
     expect(elementIds).toHaveLength(2);
     expect(elementIds.every((id) => elements[id])).toBe(true);
+  });
+});
+
+/** Серверная фигура для гидрации — форма CanvasElement с явным order. */
+function serverRect(id: string, order: number): CanvasElement {
+  return {
+    id,
+    type: 'rect',
+    x: 0,
+    y: 0,
+    angle: 0,
+    opacity: 1,
+    stroke: '#000',
+    fill: null,
+    strokeWidth: 2,
+    seed: 1,
+    order,
+    data: { width: 10, height: 10 },
+  };
+}
+
+describe('useDocumentStore — autosave-события', () => {
+  beforeEach(() => {
+    useDocumentStore.getState().reset();
+  });
+
+  afterEach(() => {
+    setDocumentChangeListener(null);
+  });
+
+  it('commitElement уведомляет слушателя событием create с готовым элементом', () => {
+    const changes: DocumentChange[] = [];
+    setDocumentChangeListener((change) => changes.push(change));
+
+    const id = commit();
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0]).toMatchObject({ type: 'create', element: { id } });
+  });
+
+  it('updateElement уведомляет событием update с id и патчем', () => {
+    const id = commit();
+    const changes: DocumentChange[] = [];
+    setDocumentChangeListener((change) => changes.push(change));
+
+    useDocumentStore.getState().updateElement(id, { x: 999 });
+
+    expect(changes).toEqual([{ type: 'update', id, patch: { x: 999 } }]);
+  });
+
+  it('deleteElements уведомляет событием delete только по реально существовавшим id', () => {
+    const id = commit();
+    const changes: DocumentChange[] = [];
+    setDocumentChangeListener((change) => changes.push(change));
+
+    useDocumentStore.getState().deleteElements([id, 'never-existed']);
+
+    expect(changes).toEqual([{ type: 'delete', ids: [id] }]);
+  });
+
+  it('пустое удаление и удаление несуществующего не дёргают слушателя', () => {
+    const listener = vi.fn();
+    setDocumentChangeListener(listener);
+
+    useDocumentStore.getState().deleteElements([]);
+    useDocumentStore.getState().deleteElements(['ghost']);
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('hydrate заливает элементы, сортирует по order и НЕ уведомляет (нет autosave-петли)', () => {
+    const listener = vi.fn();
+    setDocumentChangeListener(listener);
+
+    // Приходят вперемешку — порядок восстанавливаем по order.
+    useDocumentStore.getState().hydrate([serverRect('b', 5), serverRect('a', 1)]);
+
+    const { elementIds, elements } = useDocumentStore.getState();
+    expect(elementIds).toEqual(['a', 'b']);
+    expect(elements.a?.id).toBe('a');
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('после hydrate новый commit получает order выше максимального серверного', () => {
+    useDocumentStore.getState().hydrate([serverRect('a', 10)]);
+
+    const id = commit();
+    expect(useDocumentStore.getState().elements[id]!.order).toBeGreaterThan(10);
+  });
+
+  it('reset не уведомляет слушателя (локальный сброс, не удаление на сервере)', () => {
+    commit();
+    const listener = vi.fn();
+    setDocumentChangeListener(listener);
+
+    useDocumentStore.getState().reset();
+
+    expect(listener).not.toHaveBeenCalled();
   });
 });

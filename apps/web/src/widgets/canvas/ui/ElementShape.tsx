@@ -28,7 +28,7 @@ interface ElementShapeProps {
  */
 function nodePositionToModel(element: ElementShapeProps['element'], node: Node): Point {
   if (element.type === 'ellipse') {
-    return { x: node.x() - element.width / 2, y: node.y() - element.height / 2 };
+    return { x: node.x() - element.data.width / 2, y: node.y() - element.data.height / 2 };
   }
   return { x: node.x(), y: node.y() };
 }
@@ -71,6 +71,9 @@ export function ElementShape({
     strokeWidth: element.strokeWidth,
     opacity: element.opacity,
     rotation: element.angle,
+    // Сервер отдаёт fill как string | null (null — фигура без заливки). Konva ждёт
+    // string | undefined, поэтому null приводим к undefined — «заливки нет».
+    fill: element.fill ?? undefined,
     hitStrokeWidth,
     draggable,
     onDragEnd: handleDragEnd,
@@ -83,9 +86,8 @@ export function ElementShape({
           ref={shapeRef}
           x={element.x}
           y={element.y}
-          width={element.width}
-          height={element.height}
-          fill={element.fill}
+          width={element.data.width}
+          height={element.data.height}
           {...common}
         />
       );
@@ -95,11 +97,10 @@ export function ElementShape({
       return (
         <Ellipse
           ref={shapeRef}
-          x={element.x + element.width / 2}
-          y={element.y + element.height / 2}
-          radiusX={Math.abs(element.width) / 2}
-          radiusY={Math.abs(element.height) / 2}
-          fill={element.fill}
+          x={element.x + element.data.width / 2}
+          y={element.y + element.data.height / 2}
+          radiusX={Math.abs(element.data.width) / 2}
+          radiusY={Math.abs(element.data.height) / 2}
           {...common}
         />
       );
@@ -107,7 +108,7 @@ export function ElementShape({
     case 'line':
       // points относительны x/y — Konva.Line ровно так их и трактует.
       return (
-        <Line ref={shapeRef} x={element.x} y={element.y} points={element.points} {...common} />
+        <Line ref={shapeRef} x={element.x} y={element.y} points={element.data.points} {...common} />
       );
 
     default:
