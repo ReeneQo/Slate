@@ -3,8 +3,9 @@ import { Route, Routes } from 'react-router';
 
 import { LoginForm, RegisterForm, RequireAuth, RequireGuest } from '@/features/auth';
 import { ROUTES } from '@/shared/config';
+import { BoardsDashboard } from '@/widgets/boards-dashboard';
 
-import { BoardsStub } from './BoardsStub';
+import { BoardCanvasStub } from './BoardCanvasStub';
 
 /**
  * Дерево роутов — декларативный react-router (Routes/Route), НЕ data-API-роутер. Пути из общего
@@ -12,7 +13,7 @@ import { BoardsStub } from './BoardsStub';
  *
  * Защита — по СТАТУСУ auth-стора (гварды), а не императивным navigate: приватная зона под
  * RequireAuth (аноним → login), а login/register под RequireGuest (залогиненный → home).
- * Приватная зона пока заглушка (BoardsStub); список досок — SLT-26.
+ * Приватные роуты: home — дашборд досок (SLT-26); `/boards/:id` — холст (заглушка, SLT-27).
  */
 export function AppRoutes(): ReactElement {
   return (
@@ -21,7 +22,15 @@ export function AppRoutes(): ReactElement {
         path={ROUTES.home}
         element={
           <RequireAuth>
-            <BoardsStub />
+            <BoardsDashboard />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path={ROUTES.board}
+        element={
+          <RequireAuth>
+            <BoardCanvasStub />
           </RequireAuth>
         }
       />
