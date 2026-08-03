@@ -9,6 +9,21 @@ export const ROUTES = {
   home: '/',
   login: '/login',
   register: '/register',
+  /**
+   * Холст доски. Здесь — только ШАБЛОН пути (`:id`) для `<Route path>`; экран холста наполняет
+   * SLT-27, пока под ним заглушка. Конкретный URL строит `boardPath` — параметризованный путь
+   * нельзя держать как строку-константу, иначе id пришлось бы подставлять руками у каждого
+   * вызова.
+   */
+  board: '/boards/:id',
 } as const;
 
 export type RoutePath = (typeof ROUTES)[keyof typeof ROUTES];
+
+/**
+ * Построитель URL холста конкретной доски. Единственное место, где `:id` заменяется значением —
+ * навигация после создания доски (SLT-26) идёт через него, а не через ручную склейку строки.
+ */
+export function boardPath(id: string): string {
+  return `/boards/${id}`;
+}
