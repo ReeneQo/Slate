@@ -4,7 +4,6 @@ import { resolve } from 'node:path';
 
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { ThrottlerStorage, type ThrottlerStorageService } from '@nestjs/throttler';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
 import request from 'supertest';
@@ -155,10 +154,6 @@ export async function startTestApp(): Promise<TestApp> {
   const prisma = app.get(PrismaService);
   const redisClient = app.get(RedisService).client;
 
-  // Хранилище счётчиков throttler'а. Достаётся по символьному токену — тому же, под которым
-  // его регистрирует сам пакет.
-  const throttlerStorage = app.get<ThrottlerStorageService>(ThrottlerStorage);
-
   // getHttpServer типизирован как any (Nest не знает, какой адаптер под ним). Сужаем один
   // раз здесь, чтобы any не расползся по тестам.
   const httpServer = app.getHttpServer() as Server;
@@ -169,24 +164,24 @@ export async function startTestApp(): Promise<TestApp> {
     createAgent: () => request.agent(httpServer),
 
     /**
-     * Между тестами чистится ТРИ хранилища, и пропуск любого даёт свой характерный провал.
+     * Между тестами чистятся ДВА хранилища, и пропуск любого даёт свой характерный провал.
      *
      * 1. Таблицы — иначе повторный прогон падает на «email занят» в тесте регистрации:
      *    пользователь остался от прошлого раза. Именно это делает прогон неповторяемым.
-     * 2. Redis — иначе сессии предыдущих тестов продолжают жить, и тест «без куки → 401»
-     *    рискует пройти по чужой валидной сессии.
-     * 3. Счётчики throttler'а — самое неочевидное. Лимиты боевые (register 3/час,
-     *    login 5/15 мин), приложение поднято ОДНО на весь файл, а IP у supertest всегда
-     *    один. Без сброса четвёртый по счёту register в файле получил бы 429 — и упал бы
-     *    не тот тест, который что-то сломал, а тот, которому не повезло идти четвёртым.
+     * 2. Redis (flushdb) — снимает разом ДВЕ вещи из одной базы:
+     *    - сессии: иначе тест «без куки → 401» рискует пройти по чужой валидной сессии;
+     *    - счётчики throttler'а: лимиты боевые (register 3/час, login 5/15 мин), приложение
+     *      поднято ОДНО на весь файл, IP у supertest всегда один — без сброса четвёртый по
+     *      счёту register получил бы 429, и упал бы не тот тест, что сломал, а тот, кому не
+     *      повезло идти четвёртым. Счётчики живут в том же Redis (SLT-29, storage → Redis),
+     *      поэтому flushdb чистит и их; отдельный вызов больше не нужен.
      *
-     * Сбрасывается именно хранилище, а не подменяется guard: подменённый guard означал бы,
-     * что throttling в e2e не проверяется вообще и его поломку никто не заметит.
+     * Чистится именно хранилище, а не подменяется guard: подменённый guard означал бы, что
+     * throttling в e2e не проверяется вообще и его поломку никто не заметит.
      */
     reset: async () => {
       await prisma.$executeRawUnsafe(TRUNCATE_ALL_SQL);
       await redisClient.flushdb();
-      throttlerStorage.storage.clear();
     },
 
     /**
