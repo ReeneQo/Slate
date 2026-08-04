@@ -8,6 +8,7 @@ import { UserService } from '../user/user.service';
 import { type AuthUserDto, toAuthUser } from './dto/auth-user.dto';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
+import { SessionGenerationService } from './sessions/session-generation.service';
 import { SessionsService } from './sessions/sessions.service';
 
 /**
@@ -46,6 +47,7 @@ export class AuthService {
     private readonly userService: UserService,
     private readonly sessionsService: SessionsService,
     private readonly hashService: HashService,
+    private readonly sessionGeneration: SessionGenerationService,
   ) {}
 
   /**
@@ -112,6 +114,28 @@ export class AuthService {
   /** Выход: сессия уничтожается в хранилище, кука снимается у клиента. */
   logout(request: Request, response: Response): Promise<void> {
     return this.sessionsService.destroySession(request, response);
+  }
+
+  /**
+   * «Выйти на всех устройствах» (SLT-31).
+   *
+   * Сдвигает поколение сессий пользователя одним атомарным INCR — и этого достаточно, чтобы
+   * ВСЕ ранее выданные сессии перестали проходить сверку в guard'е и получили 401 на
+   * следующем же защищённом запросе. Перечислять и удалять сами записи `sess:<sid>` не нужно
+   * и невозможно: до чужих идентификаторов не дотянуться, а общий счётчик обесценивает их
+   * разом.
+   *
+   * Вариант «полный»: сюда попадает и ТЕКУЩАЯ сессия инициатора — её снимок тоже остался в
+   * прошлом поколении, так что инициатор вылетит вместе со всеми на своём следующем запросе.
+   * Перевыпуск его сессии («выйти везде, КРОМЕ текущего устройства») и повторный ввод пароля
+   * сознательно отложены в SLT-22 — здесь их нет.
+   *
+   * Важно, чем это НЕ является: обычный logout поколение не трогает и бьёт ровно одну сессию
+   * через destroy. Сдвиг поколения — операция другой мощности и живёт только в этом методе;
+   * никакие иные триггеры (смена пароля, удаление аккаунта) его пока не двигают.
+   */
+  async logoutAll(userId: string): Promise<void> {
+    await this.sessionGeneration.bump(userId);
   }
 
   /**
