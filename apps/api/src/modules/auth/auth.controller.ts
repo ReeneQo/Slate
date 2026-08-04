@@ -1,15 +1,5 @@
-import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  HttpStatus,
-  Post,
-  Req,
-  Res,
-  UseGuards,
-} from '@nestjs/common';
-import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 
 import { Authorization } from '../../shared/decorators/authorization.decorator';
@@ -40,18 +30,17 @@ const REGISTER_THROTTLE = { limit: 3, ttl: HOUR_MS };
  * Транспортный слой: принять, отдать, назначить статус. Ни одного правила — все решения
  * принимает AuthService.
  *
- * `@UseGuards(ThrottlerGuard)` висит на контроллере, а не регистрируется глобально через
- * APP_GUARD: сейчас лимиты нужны ровно этим роутам, а глобальный guard молча накрыл бы и
- * `/health`, который оркестратор дёргает пробами каждые несколько секунд. Когда появятся
- * board-роуты (SLT-17), throttling логично поднять до глобального — но вместе с осознанным
- * `@SkipThrottle()` на health, а не задним числом, разбираясь, почему мигает readiness.
+ * ThrottlerGuard тут БОЛЬШЕ НЕ висит через `@UseGuards`: в SLT-30 он стал глобальным
+ * (APP_GUARD, infrastructure/throttler) и накрывает все роуты. Держать его ещё и здесь
+ * значило бы прогнать guard на запрос дважды и удвоить инкремент счётчика, вдвое занизив
+ * лимит. Остались только `@Throttle` на login/register — они переопределяют глобальный
+ * `default` до боевых значений; глобальный guard читает их рефлексией.
  *
  * `req`/`res` прокидываются в сервис, потому что сессия физически живёт на них
  * (express-session вешает `req.session`, кука снимается через `res.clearCookie`).
  * Это единственное место, где auth знает про Express.
  */
 @Controller('auth')
-@UseGuards(ThrottlerGuard)
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
