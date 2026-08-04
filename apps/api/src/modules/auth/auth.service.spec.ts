@@ -6,6 +6,7 @@ import type { SafeUser, UserWithHash } from '../user/entities/user.entity';
 import { EmailAlreadyTakenError } from '../user/user.errors';
 import type { UserService } from '../user/user.service';
 import { AuthService } from './auth.service';
+import type { SessionGenerationService } from './sessions/session-generation.service';
 import type { SessionsService } from './sessions/sessions.service';
 
 const USER_ID = '019fa40d-6841-70ed-8b1d-7c64e6411bd6';
@@ -56,10 +57,12 @@ function createDependencies() {
   const destroySession = jest.fn() as jest.MockedFunction<SessionsService['destroySession']>;
   const hash = jest.fn() as jest.MockedFunction<HashService['hash']>;
   const verify = jest.fn() as jest.MockedFunction<HashService['verify']>;
+  const bump = jest.fn() as jest.MockedFunction<SessionGenerationService['bump']>;
 
   saveSession.mockResolvedValue(undefined);
   destroySession.mockResolvedValue(undefined);
   hash.mockResolvedValue(PASSWORD_HASH);
+  bump.mockResolvedValue(1);
 
   const userService = {
     create,
@@ -74,9 +77,10 @@ function createDependencies() {
 
   const sessionsService = { saveSession, destroySession } as unknown as SessionsService;
   const hashService = { hash, verify } as unknown as HashService;
+  const sessionGeneration = { bump } as unknown as SessionGenerationService;
 
   return {
-    authService: new AuthService(userService, sessionsService, hashService),
+    authService: new AuthService(userService, sessionsService, hashService, sessionGeneration),
     create,
     findByEmailWithHash,
     findByIdWithHash,
@@ -84,6 +88,7 @@ function createDependencies() {
     destroySession,
     hash,
     verify,
+    bump,
   };
 }
 
@@ -286,6 +291,31 @@ describe('AuthService', () => {
       await authService.logout(request, response);
 
       expect(destroySession).toHaveBeenCalledWith(request, response);
+    });
+
+    it('не двигает поколение: обычный выход бьёт только текущую сессию', async () => {
+      const { authService, bump } = createDependencies();
+
+      await authService.logout(request, {} as Response);
+
+      // Ключевое разграничение мощностей: logout не должен обесценивать чужие сессии
+      // пользователя. Сдвиг поколения — исключительно про logout-all.
+      expect(bump).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('logoutAll', () => {
+    it('сдвигает поколение сессий пользователя одним инкрементом', async () => {
+      const { authService, bump, destroySession } = createDependencies();
+
+      await authService.logoutAll(USER_ID);
+
+      // Отзыв — это ровно сдвиг счётчика по этому userId. Ни перечисления, ни удаления
+      // отдельных сессий: guard сам вышибет их по расхождению снимка.
+      expect(bump).toHaveBeenCalledWith(USER_ID);
+      // Сессию инициатора здесь НЕ уничтожаем через destroy (это делает обычный logout):
+      // она вылетит сама на следующем запросе по устаревшему снимку.
+      expect(destroySession).not.toHaveBeenCalled();
     });
   });
 

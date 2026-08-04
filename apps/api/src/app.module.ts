@@ -6,6 +6,7 @@ import { PrismaModule } from './infrastructure/prisma/prisma.module';
 import { RedisModule } from './infrastructure/redis/redis.module';
 import { ThrottlerConfigModule } from './infrastructure/throttler/throttler.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { SessionGenerationModule } from './modules/auth/sessions/session-generation.module';
 import { BoardModule } from './modules/board/board.module';
 import { ElementModule } from './modules/element/element.module';
 import { HealthModule } from './modules/health/health.module';
@@ -28,6 +29,10 @@ export class AppModule {
         ConfigModule.forRoot(config),
         PrismaModule,
         RedisModule,
+        // @Global: счётчик поколения сессий сверяет AuthGuard, а он работает на защищённых
+        // роутах всех доменных модулей. Регистрируется в корне рядом с прочими глобальными
+        // (Redis/Prisma), от которых зависит сам (SLT-31).
+        SessionGenerationModule,
         // Глобальный троттлинг (APP_GUARD + именованные лимиты default/autosave). Стоит в
         // корне, потому что guard обязан накрыть ВСЕ роуты; исключения задаются точечно
         // декораторами на контроллерах (@SkipThrottle на health, @Throttle на element).
