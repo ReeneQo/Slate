@@ -4,6 +4,7 @@ import { ConfigModule } from './config/config.module';
 import type { AppConfig } from './config/env.schema';
 import { PrismaModule } from './infrastructure/prisma/prisma.module';
 import { RedisModule } from './infrastructure/redis/redis.module';
+import { ThrottlerConfigModule } from './infrastructure/throttler/throttler.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { BoardModule } from './modules/board/board.module';
 import { ElementModule } from './modules/element/element.module';
@@ -27,6 +28,10 @@ export class AppModule {
         ConfigModule.forRoot(config),
         PrismaModule,
         RedisModule,
+        // Глобальный троттлинг (APP_GUARD + именованные лимиты default/autosave). Стоит в
+        // корне, потому что guard обязан накрыть ВСЕ роуты; исключения задаются точечно
+        // декораторами на контроллерах (@SkipThrottle на health, @Throttle на element).
+        ThrottlerConfigModule,
         HealthModule,
         UserModule,
         // SessionsModule напрямую здесь больше не нужен — его импортирует AuthModule,

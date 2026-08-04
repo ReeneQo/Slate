@@ -10,8 +10,14 @@ import {
   Put,
   Res,
 } from '@nestjs/common';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 
+import {
+  AUTOSAVE_LIMIT,
+  THROTTLER_AUTOSAVE,
+  THROTTLER_DEFAULT,
+} from '../../infrastructure/throttler/throttle.limits';
 import { Authorization } from '../../shared/decorators/authorization.decorator';
 import { Authorized } from '../../shared/decorators/authorized.decorator';
 import type { ElementDto } from './dto/element.dto';
@@ -43,9 +49,21 @@ import { ElementService } from './element.service';
  * `ParseUUIDPipe` без указания версии — как в SLT-19: id элементов uuid v7, и `version: '4'`
  * отверг бы их все. Пайп превращает мусорный id в честный 400 до слоя данных; без него Prisma
  * уронила бы запрос ошибкой конвертации `@db.Uuid`, то есть 500 на кривой ссылке.
+ *
+ * ТРОТТЛИНГ (SLT-30). Все три мутации — это autosave-путь (SLT-27): фронт шлёт запрос на
+ * КАЖДОЕ действие, а живое рисование = поток действий. Под общим baseline (`default`, 100/мин)
+ * активная работа быстро упёрлась бы в 429, и autosave показал бы баннер «не удалось
+ * сохранить» посреди нормального использования. Поэтому:
+ *  - `@SkipThrottle({ [THROTTLER_DEFAULT]: true })` уводит контроллер из-под baseline;
+ *  - `@Throttle({ [THROTTLER_AUTOSAVE]: AUTOSAVE_LIMIT })` сажает его на щедрый autosave-лимит
+ *    (600/мин ≈ 10 rps), не складывая его с baseline — иначе действовал бы min(100, 600) = 100.
+ * Лимит именно конечный, а не снятый: он всё ещё ловит бесконечный цикл на клиенте.
+ * Декораторы на КЛАССЕ — покрывают PUT/PATCH/DELETE разом, включая любой будущий роут.
  */
 @Controller('elements')
 @Authorization()
+@SkipThrottle({ [THROTTLER_DEFAULT]: true })
+@Throttle({ [THROTTLER_AUTOSAVE]: AUTOSAVE_LIMIT })
 export class ElementController {
   constructor(private readonly elementService: ElementService) {}
 
