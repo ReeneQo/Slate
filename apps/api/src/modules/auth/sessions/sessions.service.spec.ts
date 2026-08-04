@@ -12,7 +12,7 @@ type SessionCallback = (error?: Error | null) => void;
 
 function createConfig(): ConfigService {
   return new ConfigService({
-    app: { port: 3000, nodeEnv: 'test', allowedOrigin: 'http://localhost:5173' },
+    app: { port: 3000, nodeEnv: 'test', allowedOrigin: 'http://localhost:5173', trustProxy: 0 },
     database: { url: 'postgresql://localhost:5434/slate_test' },
     redis: { url: 'redis://localhost:6381' },
     session: {
