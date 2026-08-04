@@ -1,10 +1,16 @@
 import type { Response } from 'supertest';
 
-import { startTestApp, TEST_SESSION_COOKIE_NAME, type TestApp } from './helpers/test-app';
+import {
+  startTestApp,
+  TEST_SESSION_COOKIE_NAME,
+  type TestAgent,
+  type TestApp,
+} from './helpers/test-app';
 
 const REGISTER_URL = '/api/auth/register';
 const LOGIN_URL = '/api/auth/login';
 const LOGOUT_URL = '/api/auth/logout';
+const LOGOUT_ALL_URL = '/api/auth/logout-all';
 const ME_URL = '/api/auth/me';
 
 const USER = {
@@ -191,6 +197,73 @@ describe('Auth (e2e)', () => {
 
       // Главная проверка — не заголовок, а последствие: тем же агентом внутрь уже не войти.
       await agent.get(ME_URL).expect(401);
+    });
+  });
+
+  describe(`POST ${LOGOUT_ALL_URL}`, () => {
+    /**
+     * Второй вход тем же пользователем с ЧИСТОГО агента = вторая независимая сессия с
+     * собственной кукой. Именно до таких чужих сессий обычным logout не дотянуться — и
+     * ровно их обязан обесценивать logout-all.
+     */
+    async function loginAgain(): Promise<TestAgent> {
+      const agent = testApp.createAgent();
+      await agent.post(LOGIN_URL).send({ email: USER.email, password: USER.password }).expect(200);
+
+      return agent;
+    }
+
+    it('обесценивает ВСЕ сессии пользователя, включая ту, из которой вызван', async () => {
+      // Две живые сессии одного пользователя: первая — авто-вход при регистрации, вторая —
+      // отдельный login с другого агента.
+      const first = testApp.createAgent();
+      await first.post(REGISTER_URL).send(USER).expect(201);
+      const second = await loginAgain();
+
+      // До вызова обе сессии рабочие — иначе тест доказывал бы не то.
+      await first.get(ME_URL).expect(200);
+      await second.get(ME_URL).expect(200);
+
+      await first.post(LOGOUT_ALL_URL).expect(204);
+
+      // Ключевой кейс таски: сдвиг поколения из ОДНОЙ сессии роняет ОБЕ на следующем же
+      // защищённом запросе — и инициатора (first, «полный» вариант), и постороннюю (second).
+      await first.get(ME_URL).expect(401);
+      await second.get(ME_URL).expect(401);
+    });
+
+    it('не мешает войти заново: новая сессия снимает уже сдвинутое поколение', async () => {
+      const agent = testApp.createAgent();
+      await agent.post(REGISTER_URL).send(USER).expect(201);
+
+      await agent.post(LOGOUT_ALL_URL).expect(204);
+      await agent.get(ME_URL).expect(401);
+
+      // Сдвиг поколения обесценивает ПРОШЛЫЕ сессии, а не блокирует аккаунт: свежий вход
+      // снимает актуальное поколение и снова проходит guard.
+      const fresh = await loginAgain();
+      await fresh.get(ME_URL).expect(200);
+    });
+
+    it('требует авторизации: без сессии — 401, поколение не двигается', async () => {
+      await testApp.createAgent().post(LOGOUT_ALL_URL).expect(401);
+    });
+  });
+
+  describe('регресс: обычный logout не трогает чужие сессии того же пользователя', () => {
+    it('после logout одной сессии вторая остаётся живой', async () => {
+      const first = testApp.createAgent();
+      await first.post(REGISTER_URL).send(USER).expect(201);
+
+      const second = testApp.createAgent();
+      await second.post(LOGIN_URL).send({ email: USER.email, password: USER.password }).expect(200);
+
+      // logout бьёт РОВНО текущую сессию и НЕ двигает поколение. Если бы двигал — вторая
+      // сессия получила бы 401, и разница между logout и logout-all стёрлась бы.
+      await second.post(LOGOUT_URL).expect(204);
+
+      await second.get(ME_URL).expect(401);
+      await first.get(ME_URL).expect(200);
     });
   });
 
