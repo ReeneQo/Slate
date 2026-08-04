@@ -1,4 +1,5 @@
 import { type INestApplication, ValidationPipe } from '@nestjs/common';
+import type { Express } from 'express';
 import helmet from 'helmet';
 
 import { ConfigService } from '../config/config.service';
@@ -36,6 +37,15 @@ export function configureApp(app: INestApplication): void {
 
   // Все маршруты под /api — фронт и будущий reverse-proxy рассчитывают на /api/*.
   app.setGlobalPrefix('api');
+
+  // `trust proxy` ДО session: express-session смотрит req.secure, чтобы решить, ставить ли
+  // secure-куку, а req.secure зависит от этой настройки. За TLS-терминирующим прокси без неё
+  // соединение видится как HTTP → secure-кука не ставится вовсе, а req.ip = IP прокси.
+  // Значение — число доверенных хопов из конфига (0 в деве = не доверять). Ставится на самом
+  // Express-инстансе: это его опция, у обёртки INestApplication метода set нет. getInstance()
+  // типизирован как any (HttpServer-контракт платформо-независим) — сужаем к Express.
+  const expressApp = app.getHttpAdapter().getInstance() as Express;
+  expressApp.set('trust proxy', config.app.trustProxy);
 
   app.use(helmet());
 
