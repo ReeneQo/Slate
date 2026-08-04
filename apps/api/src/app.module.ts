@@ -10,6 +10,7 @@ import { SessionGenerationModule } from './modules/auth/sessions/session-generat
 import { BoardModule } from './modules/board/board.module';
 import { ElementModule } from './modules/element/element.module';
 import { HealthModule } from './modules/health/health.module';
+import { RealtimeModule } from './modules/realtime/realtime.module';
 import { UserModule } from './modules/user/user.module';
 
 /**
@@ -48,6 +49,10 @@ export class AppModule {
         // зарегистрирован явно: иначе его контроллер не попал бы в маршрутизацию — Nest
         // подхватывает контроллеры только у модулей, которые реально включены в граф.
         ElementModule,
+        // Realtime-транспорт этапа 3 (SLT-32): WebSocket-gateway. Транспортную обвязку io-сервера
+        // (CORS, session, connection-level auth) ставит кастомный адаптер в configureApp — модуль
+        // держит только сам gateway.
+        RealtimeModule,
       ],
     };
   }
