@@ -15,6 +15,7 @@
     "test:e2e": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest-e2e.config.mjs"
   },
   "dependencies": {
+    "@nest-lab/throttler-storage-redis": "^1.2.0",
     "@nestjs/common": "^11.0.0",
     "@nestjs/core": "^11.0.0",
     "@nestjs/platform-express": "^11.0.0",
