@@ -2,10 +2,14 @@ import { InternalServerErrorException } from '@nestjs/common';
 import type { Request, Response } from 'express';
 
 import { ConfigService } from '../../../config/config.service';
+import type { SessionGenerationService } from './session-generation.service';
 import { SessionsService } from './sessions.service';
 
 const SESSION_NAME = 'slate.sid';
 const USER_ID = '019fa40d-6841-70ed-8b1d-7c64e6411bd6';
+
+/** Поколение, которое отдаёт мок при входе, — произвольное ненулевое, чтобы снимок был заметен. */
+const CURRENT_GENERATION = 7;
 
 /** Колбэк express-session: первый аргумент — ошибка либо её отсутствие. */
 type SessionCallback = (error?: Error | null) => void;
@@ -39,12 +43,14 @@ function createRequest(options: { regenerateError?: Error; saveError?: Error } =
 
   const session = {
     userId: undefined as string | undefined,
+    sessionGen: undefined as number | undefined,
 
     regenerate(callback: SessionCallback) {
       trace.push(`regenerate:userId=${String(session.userId)}`);
       // Настоящий regenerate заводит чистый объект сессии — воспроизводим это,
       // иначе тест не поймал бы присваивание, сделанное ДО регенерации.
       session.userId = undefined;
+      session.sessionGen = undefined;
       callback(options.regenerateError ?? null);
       return session;
     },
@@ -70,7 +76,13 @@ function createResponse() {
 }
 
 describe('SessionsService', () => {
-  const sessionsService = new SessionsService(createConfig());
+  // Поколение читается из Redis реальным сервисом; здесь предмет проверки — что снимок
+  // СНИМАЕТСЯ и в правильный момент, а не сама Redis-механика (её покрывает свой файл).
+  const getCurrent = jest.fn() as jest.MockedFunction<SessionGenerationService['getCurrent']>;
+  getCurrent.mockResolvedValue(CURRENT_GENERATION);
+  const sessionGeneration = { getCurrent } as unknown as SessionGenerationService;
+
+  const sessionsService = new SessionsService(createConfig(), sessionGeneration);
 
   describe('saveSession', () => {
     it('регенерирует сессию, затем пишет userId и сохраняет', async () => {
@@ -83,6 +95,17 @@ describe('SessionsService', () => {
       // «оба метода вызваны» прошло бы и при неверном порядке.
       expect(trace).toEqual(['regenerate:userId=undefined', `save:userId=${USER_ID}`]);
       expect(session.userId).toBe(USER_ID);
+    });
+
+    it('снимает снимок текущего поколения по userId вошедшего пользователя', async () => {
+      const { req, session } = createRequest();
+
+      await sessionsService.saveSession(req, { id: USER_ID });
+
+      // Снимок берётся по id ИМЕННО этого пользователя (иначе logout-all не сможет его
+      // догнать) и замораживается в сессии — именно его потом сверяет guard.
+      expect(getCurrent).toHaveBeenCalledWith(USER_ID);
+      expect(session.sessionGen).toBe(CURRENT_GENERATION);
     });
 
     it('не теряет userId из-за очистки сессии в regenerate', async () => {

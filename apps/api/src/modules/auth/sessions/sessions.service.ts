@@ -4,19 +4,24 @@ import type { Request, Response } from 'express';
 import { ConfigService } from '../../../config/config.service';
 import { createSessionCookieOptions } from '../../../infrastructure/session/session.factory';
 import type { SafeUser } from '../../user/entities/user.entity';
+import { SessionGenerationService } from './session-generation.service';
 
 /**
  * Работа с жизненным циклом сессии: вход и выход.
  *
- * Сервис не знает про Redis и не ходит в него сам — хранилище подключено как store
- * session-middleware (см. session.factory). Здесь только правила поверх `req.session`,
- * и это осознанно: заменив store на другой, менять сервис не придётся.
- *
- * Эндпоинтов тут нет — их принесёт SLT-16, он и будет вызывать эти методы.
+ * Само ХРАНИЛИЩЕ сессий сервис по-прежнему не трогает — оно подключено как store
+ * session-middleware (см. session.factory), и правила здесь живут поверх `req.session`.
+ * Единственная зависимость от Redis — косвенная, через `SessionGenerationService`: при входе
+ * нужно снять снимок поколения (SLT-31), а поколение хранится отдельным счётчиком, а не в
+ * store сессий. Это доменная зависимость, а не работа с сырым клиентом, поэтому граница
+ * «заменил store — сервис не трогаю» остаётся в силе.
  */
 @Injectable()
 export class SessionsService {
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly sessionGeneration: SessionGenerationService,
+  ) {}
 
   /**
    * Привязывает сессию к пользователю после успешной аутентификации.
@@ -27,8 +32,13 @@ export class SessionsService {
    * внутри её сессии со своей копией куки. `regenerate` выдаёт НОВЫЙ id и выбрасывает
    * старый, поэтому подсунутый заранее идентификатор после логина ничего не стоит.
    *
-   * userId ставится СТРОГО после regenerate: regenerate очищает объект сессии, и запись,
-   * сделанная до него, будет молча стёрта — пользователь получил бы 200 и пустую сессию.
+   * userId и снимок поколения ставятся СТРОГО после regenerate: regenerate очищает объект
+   * сессии, и запись, сделанная до него, будет молча стёрта — пользователь получил бы 200 и
+   * пустую сессию.
+   *
+   * `sessionGen` — снимок актуального поколения на момент входа (SLT-31). Он замораживается
+   * здесь и потом только СВЕРЯЕТСЯ guard'ом: новый вход всегда получает текущее значение и
+   * потому валиден, а logout-all, сдвинув счётчик, оставит все ранее снятые снимки позади.
    *
    * Принимаем `Pick<SafeUser, 'id'>`, а не всего пользователя: функция читает ровно одно
    * поле, и подпись это фиксирует.
@@ -37,6 +47,7 @@ export class SessionsService {
     await this.regenerate(req);
 
     req.session.userId = user.id;
+    req.session.sessionGen = await this.sessionGeneration.getCurrent(user.id);
 
     await this.persist(req);
   }
