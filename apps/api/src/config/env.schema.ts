@@ -22,6 +22,13 @@ const rawEnvSchema = z.object({
 
   ALLOWED_ORIGIN: z.string().min(1),
 
+  // Число доверенных reverse-proxy перед бэком (Express `trust proxy`). За балансировщиком,
+  // терминирующим TLS, без этого Express видит соединение как HTTP: req.secure=false (secure-кука
+  // не ставится) и req.ip = IP прокси (rate-limit сваливает всех клиентов в один bucket).
+  // Число хопов, а НЕ true: true доверяет любому X-Forwarded-For, включая подставленный клиентом.
+  // 0 = не доверять (дев, прямое соединение), дефолт 1 = один прокси (типовой прод).
+  TRUST_PROXY: z.coerce.number().int().nonnegative().default(1),
+
   // Ключ подписи session-id. Обязателен: сервер без него поднимать нельзя — подделка
   // куки становится тривиальной. Минимум 32 символа ≈ 256 бит энтропии от
   // `openssl rand -base64 32`; короткий секрет перебирается офлайн по перехваченной куке.
@@ -48,6 +55,7 @@ export const envSchema = rawEnvSchema.transform((env) => ({
     port: env.API_PORT,
     nodeEnv: env.NODE_ENV,
     allowedOrigin: env.ALLOWED_ORIGIN,
+    trustProxy: env.TRUST_PROXY,
   },
   database: {
     url: env.DATABASE_URL,
