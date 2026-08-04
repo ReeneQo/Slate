@@ -19,7 +19,9 @@
     "@nestjs/common": "^11.0.0",
     "@nestjs/core": "^11.0.0",
     "@nestjs/platform-express": "^11.0.0",
+    "@nestjs/platform-socket.io": "^11.1.28",
     "@nestjs/throttler": "^6.5.0",
+    "@nestjs/websockets": "^11.1.28",
     "@prisma/adapter-pg": "^7.9.0",
     "@slate/database": "workspace:*",
     "@slate/shared-types": "workspace:*",
@@ -33,6 +35,7 @@
     "pg": "^8.22.0",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.0",
+    "socket.io": "^4.8.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
