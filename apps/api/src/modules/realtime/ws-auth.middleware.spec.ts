@@ -24,9 +24,12 @@ function fakeSocket(session: (Session & Partial<SessionData>) | undefined): AppS
   } as unknown as AppSocket;
 }
 
-/** Сессия с заданным userId. Поля самой express-session-сессии (cookie и пр.) роли тут не играют. */
-function sessionWith(userId: string | undefined): Session & Partial<SessionData> {
-  return { userId } as Session & Partial<SessionData>;
+/** Сессия с заданным userId (и опционально снимком поколения). Остальные поля роли тут не играют. */
+function sessionWith(
+  userId: string | undefined,
+  sessionGen?: number,
+): Session & Partial<SessionData> {
+  return { userId, sessionGen } as Session & Partial<SessionData>;
 }
 
 describe('createWsAuthMiddleware', () => {
@@ -43,6 +46,30 @@ describe('createWsAuthMiddleware', () => {
     // Ровно один вызов и без аргумента-ошибки — это и есть «соединение разрешено».
     expect(next).toHaveBeenCalledWith();
     expect(socket.data.userId).toBe('user-1');
+  });
+
+  it('кладёт снимок поколения сессии в socket.data.sessionGen рядом с userId', () => {
+    // Arrange
+    const socket = fakeSocket(sessionWith('user-1', 3));
+    const next = jest.fn<void, [ExtendedError?]>();
+
+    // Act
+    createWsAuthMiddleware()(socket, next);
+
+    // Assert
+    expect(socket.data.sessionGen).toBe(3);
+  });
+
+  it('трактует отсутствие снимка поколения в сессии как поколение 0 (до-SLT-31 сессии)', () => {
+    // Arrange: sessionGen не задан вовсе — та же трактовка, что у AuthGuard и SessionsService.
+    const socket = fakeSocket(sessionWith('user-1'));
+    const next = jest.fn<void, [ExtendedError?]>();
+
+    // Act
+    createWsAuthMiddleware()(socket, next);
+
+    // Assert
+    expect(socket.data.sessionGen).toBe(0);
   });
 
   it('отклоняет соединение, когда сессия есть, но userId в ней нет', () => {
