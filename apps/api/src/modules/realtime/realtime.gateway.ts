@@ -6,10 +6,11 @@ import {
   type OnGatewayDisconnect,
   SubscribeMessage,
   WebSocketGateway,
+  WebSocketServer,
 } from '@nestjs/websockets';
 
 import { BoardRoomService } from './board-room.service';
-import type { AppSocket, BoardJoinResult } from './realtime.types';
+import type { AppServer, AppSocket, BoardJoinResult } from './realtime.types';
 
 /**
  * WebSocket-gateway приложения — точка входа realtime-транспорта (SLT-32, фундамент этапа 3).
@@ -32,6 +33,15 @@ import type { AppSocket, BoardJoinResult } from './realtime.types';
 @WebSocketGateway()
 export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(RealtimeGateway.name);
+
+  /**
+   * io-сервер, поднятый кастомным адаптером. Nest заполняет поле после createIOServer — до
+   * первого события оно гарантированно готово. Пока читается только двух-инстансным e2e
+   * Redis-адаптера (SLT-34): broadcast в комнату доски с одного инстанса, приём — на другом.
+   * Presence (3.2) и синхронизация элементов (3.3) будут слать отсюда доменные события в комнаты.
+   */
+  @WebSocketServer()
+  readonly server!: AppServer;
 
   constructor(private readonly boardRoomService: BoardRoomService) {}
 

@@ -20,8 +20,8 @@ import { RedisService } from '../../src/infrastructure/redis/redis.service';
  * зафиксированы точно (не `latest`) по той же причине — прогон не должен менять смысл
  * оттого, что в реестре обновился тег.
  */
-const POSTGRES_IMAGE = 'postgres:16';
-const REDIS_IMAGE = 'redis:7';
+export const POSTGRES_IMAGE = 'postgres:16';
+export const REDIS_IMAGE = 'redis:7';
 
 /** Корень пакета с Prisma-схемой: миграции запускаются оттуда, схема адресуется относительно него. */
 const DATABASE_PACKAGE_DIR = resolve(__dirname, '../../../../packages/database');
@@ -57,7 +57,7 @@ export const TEST_SESSION_COOKIE_NAME = 'slate.sid';
  * а схема подставит дефолт. Секрет — фиксированная строка нужной длины: он подписывает
  * session-id внутри одного прогона и ничего не защищает.
  */
-function buildTestEnv(databaseUrl: string, redisUrl: string): NodeJS.ProcessEnv {
+export function buildTestEnv(databaseUrl: string, redisUrl: string): NodeJS.ProcessEnv {
   return {
     DATABASE_URL: databaseUrl,
     REDIS_URL: redisUrl,
@@ -84,7 +84,7 @@ function buildTestEnv(databaseUrl: string, redisUrl: string): NodeJS.ProcessEnv 
  * process.env текущего процесса нельзя: prisma.config.ts читает переменную «мягко», и такая
  * запись протекла бы в остальной прогон.
  */
-function applyMigrations(databaseUrl: string): void {
+export function applyMigrations(databaseUrl: string): void {
   try {
     execFileSync('pnpm', ['exec', 'prisma', 'migrate', 'deploy'], {
       cwd: DATABASE_PACKAGE_DIR,

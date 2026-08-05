@@ -1,6 +1,8 @@
 import type { INestApplicationContext } from '@nestjs/common';
 import { IoAdapter } from '@nestjs/platform-socket.io';
+import { createAdapter } from '@socket.io/redis-adapter';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
+import type { Redis } from 'ioredis';
 import type { ExtendedError, ServerOptions } from 'socket.io';
 
 import type { AppServer, AppSocket } from '../../modules/realtime/realtime.types';
@@ -19,6 +21,13 @@ export interface SessionIoAdapterOptions {
   authMiddleware: SocketMiddleware;
   /** Origin для ws-CORS. Тот же, что у HTTP-CORS (из ConfigService) — один источник origin. */
   allowedOrigin: string;
+  /**
+   * Готовые pub/sub-соединения для Redis-адаптера socket.io (SLT-34, multi-instance broadcast).
+   * Структурный тип, а не сам провайдер: адаптер живёт вне DI-графа и не должен знать про
+   * infrastructure/redis — ему нужны ровно два коннекта. Создаёт и закрывает их RedisPubSubProvider,
+   * configureApp достаёт его из DI и прокидывает сюда.
+   */
+  redisPubSub: { pub: Redis; sub: Redis };
 }
 
 /**
@@ -48,10 +57,12 @@ function adaptSessionMiddleware(sessionMiddleware: RequestHandler): SocketMiddle
  *      express-session), затем connection-level auth. Порядок — часть контракта: auth читает уже
  *      разобранную сессию, поменяй их местами — userId всегда был бы undefined и любой сокет
  *      отклонялся бы.
- *
- * Расширяется под Redis-адаптер socket.io (SLT-3.1, multi-instance broadcast) очевидным образом —
- * `server.adapter(createAdapter(...))` перед возвратом, — но пустых точек под это сейчас не
- * закладываем (YAGNI): следующая задача добавит их вместе с pub/sub-клиентами.
+ *   3. Ставит Redis-адаптер socket.io (SLT-34): `server.adapter(createAdapter(pub, sub))`. Без него
+ *      broadcast в комнату доходит только до сокетов ЭТОГО инстанса — клиенты одной доски на разных
+ *      инстансах не видели бы событий друг друга. Адаптер прозрачен для gateway и модели событий:
+ *      меняется только транспорт broadcast под капотом (Redis pub/sub связывает инстансы). На одном
+ *      инстансе он неотличим от своего отсутствия — ценность проявляется при нескольких инстансах
+ *      за балансировщиком (тогда же нужны sticky-sessions на уровне инфраструктуры деплоя).
  */
 export class SessionIoAdapter extends IoAdapter {
   constructor(
@@ -72,6 +83,12 @@ export class SessionIoAdapter extends IoAdapter {
         credentials: true,
       },
     }) as AppServer;
+
+    // Redis-адаптер ДО подписки middleware/событий: он лишь подменяет транспорт broadcast, но
+    // ставить его логично сразу после создания сервера, пока сервер «пустой». createAdapter
+    // получает готовые pub/sub из провайдера — сам адаптер соединениями не владеет.
+    const { pub, sub } = this.options.redisPubSub;
+    server.adapter(createAdapter(pub, sub));
 
     server.use(adaptSessionMiddleware(this.options.sessionMiddleware));
     server.use(this.options.authMiddleware);
