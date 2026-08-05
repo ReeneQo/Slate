@@ -28,8 +28,8 @@ interface AdapterProbePayload {
   marker: string;
 }
 
-/** Локальная карта серверных событий: ровно один зонд. Модель приложения (ServerToClientEvents)
- * пуста намеренно — расширяем её здесь кастом, не трогая src. */
+/** Локальная карта серверных событий: ровно один зонд, не входящий в модель приложения
+ * (ServerToClientEvents, SLT-35) — расширяем её здесь кастом на тестовое событие, не трогая src. */
 type ProbeServerEvents = {
   adapter_probe: (payload: AdapterProbePayload) => void;
 };
@@ -138,8 +138,8 @@ describe('Redis adapter (e2e, multi-instance)', () => {
     // Слушатель ставим ДО broadcast, иначе гонка: событие могло бы прийти раньше подписки.
     const received = once<AdapterProbePayload>(client2, 'adapter_probe');
 
-    // Broadcast с инстанса-1 в комнату. Каст — потому что модель ServerToClientEvents пуста (событие
-    // тестовое, в src его нет); транспорт при этом самый настоящий.
+    // Broadcast с инстанса-1 в комнату. Каст — потому что событие тестовое и в модели приложения
+    // (ServerToClientEvents) его нет; транспорт при этом самый настоящий.
     const payload: AdapterProbePayload = { marker: 'cross-instance' };
     (
       apps.server1 as unknown as Server<
