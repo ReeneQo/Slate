@@ -10,6 +10,7 @@ import {
 } from '@nestjs/websockets';
 
 import { BoardRoomService } from './board-room.service';
+import { PresenceService } from './presence.service';
 import type { AppServer, AppSocket, BoardJoinResult } from './realtime.types';
 
 /**
@@ -20,11 +21,18 @@ import type { AppServer, AppSocket, BoardJoinResult } from './realtime.types';
  * был userId, — аноним отклонён на handshake. Поэтому `socket.data.userId` тут гарантированно
  * заполнен (см. ws-auth.middleware и SocketData).
  *
- * Помимо логирования connect/disconnect gateway ведёт членство в комнатах досок (SLT-33):
- * `join_board`/`leave_board`. Тонкость сохранена сознательно — как контроллер в этой архитектуре,
- * gateway лишь принимает событие и делегирует BoardRoomService; проверка доступа, вход/выход из
- * комнаты и логирование — там. Presence (3.2) и синхронизация элементов (3.3) сядут сюда такими
- * же обработчиками сверху.
+ * Помимо логирования connect/disconnect gateway ведёт членство в комнатах досок (SLT-33) и presence
+ * (SLT-35): `join_board`/`leave_board` дёргают ОБА домена — `BoardRoomService` (комната socket.io) и
+ * `PresenceService` (онлайн-реестр в Redis) — каждый своим независимым разбором payload. Это не
+ * бизнес-логика в контроллере, а последовательная делегация: gateway не решает НИЧЕГО про доступ или
+ * онлайн, он лишь знает порядок вызова (presence — только если членство подтверждено) и передаёт тот
+ * же payload обеим службам. `presence_ping` — чистая делегация без условий.
+ *
+ * Уборка presence при отключении сокета (SLT-35, graceful И оборванное) висит не на `disconnect`
+ * (`OnGatewayDisconnect`), а на socket.io-событии `disconnecting`, поставленном в `handleConnection`:
+ * к моменту `disconnect` socket.io УЖЕ вывел сокет из всех комнат (`socket.rooms` пуст), а
+ * `PresenceService.leaveAll` берёт список досок именно оттуда. `disconnecting` — единственная точка,
+ * где комнаты сокета ещё видны.
  *
  * Namespace и путь оставлены дефолтными (`/`, `/socket.io`): CORS и session-middleware вешает
  * адаптер на уровне io-сервера, конфигурировать их в декораторе не нужно — иначе появился бы
@@ -36,17 +44,29 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
 
   /**
    * io-сервер, поднятый кастомным адаптером. Nest заполняет поле после createIOServer — до
-   * первого события оно гарантированно готово. Пока читается только двух-инстансным e2e
-   * Redis-адаптера (SLT-34): broadcast в комнату доски с одного инстанса, приём — на другом.
-   * Presence (3.2) и синхронизация элементов (3.3) будут слать отсюда доменные события в комнаты.
+   * первого события оно гарантированно готово. Читается двух-инстансным e2e Redis-адаптера
+   * (SLT-34: broadcast в комнату доски с одного инстанса, приём — на другом) и серверным
+   * presence-тиком (SLT-35, PresenceSweeperService: перебор сокетов инстанса и broadcast leave-
+   * дельт вне контекста конкретного события).
    */
   @WebSocketServer()
   readonly server!: AppServer;
 
-  constructor(private readonly boardRoomService: BoardRoomService) {}
+  constructor(
+    private readonly boardRoomService: BoardRoomService,
+    private readonly presenceService: PresenceService,
+  ) {}
 
   handleConnection(client: AppSocket): void {
     this.logger.log(`WS connected: user=${client.data.userId} socket=${client.id}`);
+
+    // См. класс-докстринг: единственная точка, где socket.rooms ещё не очищен на выходе.
+    client.on('disconnecting', () => {
+      this.presenceService.leaveAll(client).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Presence cleanup on disconnect failed: ${message}`);
+      });
+    });
   }
 
   handleDisconnect(client: AppSocket): void {
@@ -56,21 +76,37 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   /**
    * Вход в комнату доски. Возврат обработчика Nest передаёт в ack-callback клиента — поэтому
    * исход (в комнате / отказ с причиной) едет назад именно так, без отдельного события.
+   *
+   * Presence входит В КОМНАТУ ТОЛЬКО при успешном членстве — отказ `board_not_found` не должен
+   * тихо всё равно записать сокет в онлайн доски, к которой ему отказано в доступе.
    */
   @SubscribeMessage('join_board')
-  handleJoinBoard(
+  async handleJoinBoard(
     @ConnectedSocket() client: AppSocket,
     @MessageBody() payload: unknown,
   ): Promise<BoardJoinResult> {
-    return this.boardRoomService.joinBoard(client, payload);
+    const result = await this.boardRoomService.joinBoard(client, payload);
+
+    if (result.ok) {
+      await this.presenceService.join(client, payload);
+    }
+
+    return result;
   }
 
   /** Выход из комнаты доски. Без ack — выход не отклоняется и идемпотентен (см. BoardRoomService). */
   @SubscribeMessage('leave_board')
-  handleLeaveBoard(
+  async handleLeaveBoard(
     @ConnectedSocket() client: AppSocket,
     @MessageBody() payload: unknown,
   ): Promise<void> {
-    return this.boardRoomService.leaveBoard(client, payload);
+    await this.boardRoomService.leaveBoard(client, payload);
+    await this.presenceService.leave(client, payload);
+  }
+
+  /** Прикладной presence-heartbeat (SLT-35). Без ack — клиенту не на что реагировать. */
+  @SubscribeMessage('presence_ping')
+  handlePresencePing(@ConnectedSocket() client: AppSocket): Promise<void> {
+    return this.presenceService.heartbeat(client);
   }
 }
