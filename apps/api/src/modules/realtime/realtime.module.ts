@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { BoardModule } from '../board/board.module';
 import { BoardRoomService } from './board-room.service';
 import { PresenceService } from './presence.service';
+import { PresenceSweeperService } from './presence-sweeper.service';
 import { RealtimeGateway } from './realtime.gateway';
 
 /**
@@ -16,6 +17,10 @@ import { RealtimeGateway } from './realtime.gateway';
  * папке, в провайдеры модуля не попадает: его подключает адаптер на этапе создания io-сервера, до
  * того как Nest начнёт инстанцировать gateway.
  *
+ * `SessionGenerationService`, нужный `PresenceSweeperService` для сверки поколений сессий, сюда не
+ * импортируется: он раздаётся `@Global()`-модулем (SessionGenerationModule, SLT-31) — тем же путём,
+ * что Redis и Config.
+ *
  * BoardModule импортируется ради ОДНОГО провайдера — BoardService: BoardRoomService зовёт его
  * `canAccess`, чтобы авторизовать вход в комнату тем же инвариантом, что и HTTP. Зависимость
  * направлена только сюда — board-модуль про realtime в DI не знает, — как и у element-модуля,
@@ -23,6 +28,6 @@ import { RealtimeGateway } from './realtime.gateway';
  */
 @Module({
   imports: [BoardModule],
-  providers: [RealtimeGateway, BoardRoomService, PresenceService],
+  providers: [RealtimeGateway, BoardRoomService, PresenceService, PresenceSweeperService],
 })
 export class RealtimeModule {}
