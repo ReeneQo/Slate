@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import { BoardService } from '../board/board.service';
-import { type AppSocket, type BoardJoinResult, boardRoom } from './realtime.types';
+import { type AppSocket, type BoardJoinResult, boardRoom, extractBoardId } from './realtime.types';
 
 /**
  * Членство сокета в комнатах досок (SLT-33): вход с проверкой доступа и выход.
@@ -71,19 +71,4 @@ export class BoardRoomService {
       `WS left board: user=${socket.data.userId} board=${boardId} socket=${socket.id}`,
     );
   }
-}
-
-/**
- * Достать boardId из недоверенного payload события. `null` ⇒ payload не той формы (не объект, нет
- * поля, не строка, пустая строка) — вызывающий трактует это как «доски нет». Разбор в одном месте,
- * а не в каждом обработчике: обе точки входа (join/leave) получают одинаково просеянный id.
- */
-function extractBoardId(payload: unknown): string | null {
-  if (typeof payload !== 'object' || payload === null) {
-    return null;
-  }
-
-  const { boardId } = payload as { boardId?: unknown };
-
-  return typeof boardId === 'string' && boardId.length > 0 ? boardId : null;
 }
