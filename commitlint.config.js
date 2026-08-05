@@ -11,6 +11,7 @@ module.exports = {
         'element',
         'canvas',
         'auth',
+        'realtime',
         'infra',
         'db',
         'deps',

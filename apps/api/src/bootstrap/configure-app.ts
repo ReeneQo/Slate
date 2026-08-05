@@ -5,6 +5,8 @@ import helmet from 'helmet';
 import { ConfigService } from '../config/config.service';
 import { RedisService } from '../infrastructure/redis/redis.service';
 import { createSessionMiddleware } from '../infrastructure/session/session.factory';
+import { SessionIoAdapter } from '../infrastructure/websocket/session-io.adapter';
+import { createWsAuthMiddleware } from '../modules/realtime/ws-auth.middleware';
 
 /**
  * Обвязка приложения: префикс, middleware, глобальные пайпы. Всё, что стоит МЕЖДУ
@@ -52,7 +54,12 @@ export function configureApp(app: INestApplication): void {
   // Session-store поднят на ОБЩЕМ ioredis-клиенте: достаём его из DI, а не создаём второй
   // коннект. ConfigService берём оттуда же, чтобы конфиг был один и тот же объект, а не
   // заново провалидированная копия.
-  app.use(createSessionMiddleware(config, app.get(RedisService).client));
+  //
+  // Инстанс middleware сохраняем в переменную, а не конструируем прямо в app.use: тот же самый
+  // инстанс уходит в ws-адаптер ниже. Один источник конфига сессии на оба транспорта (HTTP и WS) —
+  // иначе секрет/store/prefix пришлось бы держать синхронными в двух местах (SLT-32).
+  const sessionMiddleware = createSessionMiddleware(config, app.get(RedisService).client);
+  app.use(sessionMiddleware);
 
   // CORS для SPA (Vite). Origin — из конфига, credentials — обязателен: без него браузер
   // не отправит session-куку на кросс-origin запрос (5173 → 3000).
@@ -60,6 +67,18 @@ export function configureApp(app: INestApplication): void {
     origin: config.app.allowedOrigin,
     credentials: true,
   });
+
+  // WebSocket-транспорт (SLT-32). Кастомный IoAdapter вешает на io-сервер ТОТ ЖЕ session-middleware
+  // (разбор куки на handshake) и connection-level auth (аноним отклоняется на соединении). Ставится
+  // ДО app.init()/listen(): gateway'и биндятся именно там, а адаптер к тому моменту уже должен быть
+  // выбран. Общий с e2e путь — тесты поднимают тот же транспорт, что и прод.
+  app.useWebSocketAdapter(
+    new SessionIoAdapter(app, {
+      sessionMiddleware,
+      authMiddleware: createWsAuthMiddleware(),
+      allowedOrigin: config.app.allowedOrigin,
+    }),
+  );
 
   // Единая валидация входа. whitelist — срезает поля вне DTO, transform — приводит к типам DTO.
   app.useGlobalPipes(
