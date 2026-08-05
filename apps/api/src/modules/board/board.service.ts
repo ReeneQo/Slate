@@ -56,11 +56,27 @@ export class BoardService {
    * @throws {NotFoundException} доска не существует ИЛИ принадлежит другому пользователю
    */
   async assertAccessible(boardId: string, userId: string): Promise<void> {
-    const isAccessible = await this.boardRepository.existsAccessible(boardId, userId);
-
-    if (!isAccessible) {
+    if (!(await this.canAccess(boardId, userId))) {
       throw boardNotFound();
     }
+  }
+
+  /**
+   * Тот же инвариант доступа, что у `assertAccessible`, но БЕЗ HTTP-исключения — просто «да/нет».
+   *
+   * Существует ради вызывающих вне HTTP: WebSocket-шлюз этапа 3 (join в комнату доски, SLT-33)
+   * решает по сокету, пускать ли клиента, и `NotFoundException` (то есть HTTP-статус 404) в
+   * реалтайме неуместен — там отказ едет назад ack-callback'ом с доменной причиной, а не
+   * HTTP-кодом. Поэтому наружу торчат ДВЕ формы одного правила: бросающая `assertAccessible`
+   * для контроллеров и булева `canAccess` для транспортов, где исключение не к месту.
+   *
+   * Обе идут через ОДНО ядро — `existsAccessible` в репозитории (там же вклеен access-scope), —
+   * и `assertAccessible` теперь выражен через `canAccess`: правило доступа определено единожды,
+   * а не продублировано на два метода, которые однажды разъедутся. Репозиторий наружу по-прежнему
+   * не отдаётся (см. board.module), поэтому булев доступ проходит через сервис, а не мимо него.
+   */
+  canAccess(boardId: string, userId: string): Promise<boolean> {
+    return this.boardRepository.existsAccessible(boardId, userId);
   }
 
   /** @throws {NotFoundException} доска не существует ИЛИ принадлежит другому пользователю */

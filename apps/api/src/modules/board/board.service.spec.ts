@@ -226,6 +226,26 @@ describe('BoardService', () => {
     });
   });
 
+  describe('canAccess', () => {
+    // Булев сосед assertAccessible для не-HTTP вызывающих (ws-комнаты, SLT-33): то же ядро
+    // existsAccessible, но «да/нет» вместо исключения. Проверяем ровно проброс результата — без
+    // NotFoundException, которому в реалтайме не место.
+    it('возвращает true, когда доска доступна пользователю', async () => {
+      const { boardService, existsAccessible } = createDependencies();
+      existsAccessible.mockResolvedValue(true);
+
+      await expect(boardService.canAccess(BOARD_ID, USER_ID)).resolves.toBe(true);
+      expect(existsAccessible).toHaveBeenCalledWith(BOARD_ID, USER_ID);
+    });
+
+    it('возвращает false на чужую или несуществующую доску, не бросая', async () => {
+      const { boardService, existsAccessible } = createDependencies();
+      existsAccessible.mockResolvedValue(false);
+
+      await expect(boardService.canAccess(BOARD_ID, USER_ID)).resolves.toBe(false);
+    });
+  });
+
   describe('findElements', () => {
     it('отдаёт элементы владельцу без version и deletedAt', async () => {
       const { boardService, findElements } = createDependencies();
