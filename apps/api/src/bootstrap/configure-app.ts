@@ -4,6 +4,7 @@ import helmet from 'helmet';
 
 import { ConfigService } from '../config/config.service';
 import { RedisService } from '../infrastructure/redis/redis.service';
+import { RedisPubSubProvider } from '../infrastructure/redis/redis-pubsub.provider';
 import { createSessionMiddleware } from '../infrastructure/session/session.factory';
 import { SessionIoAdapter } from '../infrastructure/websocket/session-io.adapter';
 import { createWsAuthMiddleware } from '../modules/realtime/ws-auth.middleware';
@@ -68,15 +69,20 @@ export function configureApp(app: INestApplication): void {
     credentials: true,
   });
 
-  // WebSocket-транспорт (SLT-32). Кастомный IoAdapter вешает на io-сервер ТОТ ЖЕ session-middleware
-  // (разбор куки на handshake) и connection-level auth (аноним отклоняется на соединении). Ставится
-  // ДО app.init()/listen(): gateway'и биндятся именно там, а адаптер к тому моменту уже должен быть
-  // выбран. Общий с e2e путь — тесты поднимают тот же транспорт, что и прод.
+  // WebSocket-транспорт (SLT-32/34). Кастомный IoAdapter вешает на io-сервер ТОТ ЖЕ
+  // session-middleware (разбор куки на handshake), connection-level auth (аноним отклоняется на
+  // соединении) и Redis-адаптер для multi-instance broadcast (SLT-34). Ставится ДО app.init()/
+  // listen(): gateway'и биндятся именно там, а адаптер к тому моменту уже должен быть выбран.
+  // Общий с e2e путь — тесты поднимают тот же транспорт, что и прод.
+  //
+  // pub/sub-соединения достаём из DI (владелец их жизненного цикла — RedisPubSubProvider) и
+  // передаём готовыми: адаптер живёт вне DI-графа и соединениями не управляет.
   app.useWebSocketAdapter(
     new SessionIoAdapter(app, {
       sessionMiddleware,
       authMiddleware: createWsAuthMiddleware(),
       allowedOrigin: config.app.allowedOrigin,
+      redisPubSub: app.get(RedisPubSubProvider),
     }),
   );
 
