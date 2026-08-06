@@ -18,13 +18,15 @@ import { ElementService } from './element.service';
  * обычные типы и константы, без участия DI: чтение содержимого доски отдаёт ту же форму, что и
  * мутации, — одну на приложение.
  *
- * `exports` нет: наружу модуль отдаёт только HTTP. Появится потребитель (WebSocket-шлюз этапа 3
- * — самый вероятный) — уедет ElementService, но не ElementRepository, по той же причине, что и
- * у доски: мимо сервиса до данных дотягиваться нельзя.
+ * `exports: [ElementService]` (SLT-38): предсказанный в этом же комментарии потребитель настал —
+ * realtime-модуль зовёт `upsertEntity`/`patchVersioned`/`removeVersioned` для WS-мутаций
+ * элементов. ElementRepository наружу по-прежнему НЕ уходит, по той же причине, что и у доски:
+ * мимо сервиса до данных дотягиваться нельзя, откуда бы ни звали — из контроллера или из gateway.
  */
 @Module({
   imports: [BoardModule],
   controllers: [ElementController],
   providers: [ElementRepository, ElementService],
+  exports: [ElementService],
 })
 export class ElementModule {}

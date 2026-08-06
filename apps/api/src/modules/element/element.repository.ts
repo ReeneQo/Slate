@@ -240,6 +240,53 @@ export class ElementRepository {
   }
 
   /**
+   * То же самое, что `patchAccessible`, плюс ОПТИМИСТИЧЕСКАЯ БЛОКИРОВКА (SLT-38, WS-мутации):
+   * `version` вклеена В ТОТ ЖЕ `where`, что и scope доступа с фильтром живой строки — не отдельная
+   * проверка до записи, а условие самого UPDATE. `null` теперь означает ЛЮБОЕ из трёх: элемент
+   * недоступен/не существует/удалён, ИЛИ версия устарела — Postgres обновляет 0 строк что при
+   * несовпадении id/scope/deletedAt, что при несовпадении version, и Prisma в обоих случаях
+   * бросает P2025 одинаково. Различать причину снаружи нечем на уровне ЭТОГО запроса — вызывающий
+   * (ElementService.patchVersioned), если нужно объяснить клиенту, что именно не сошлось, читает
+   * актуальное состояние отдельным запросом ПОСЛЕ отказа, не до него.
+   *
+   * КАТЕГОРИЧЕСКИ не read-then-write: между «прочитать version» и «записать» у read-then-write
+   * есть окно, в которое поместится чужой конкурентный UPDATE — тогда обе стороны считали бы
+   * версию нетронутой и обе записали бы поверх друг друга. Здесь сравнение и запись — одна
+   * SQL-инструкция (`UPDATE ... WHERE id=? AND version=? AND ... SET ..., version=version+1`),
+   * атомарная на уровне Postgres: при двух параллельных вызовах с одной и той же ожидаемой
+   * version ОБЕ команды видят исходную строку, но исполняются последовательно (MVCC), и вторая
+   * попадает уже по изменившейся version — 0 строк, P2025, `null`.
+   */
+  async patchAccessibleVersioned(
+    elementId: string,
+    userId: string,
+    expectedVersion: number,
+    { data: geometry, ...changes }: PatchElementData,
+  ): Promise<ElementEntity | null> {
+    try {
+      return await this.prisma.element.update({
+        where: {
+          ...accessibleElementScope(elementId, userId),
+          ...LIVE_ELEMENT_WHERE,
+          version: expectedVersion,
+        },
+        data: {
+          ...changes,
+          ...(geometry === undefined ? {} : { data: geometry }),
+          version: { increment: 1 },
+        },
+        select: ELEMENT_SELECT,
+      });
+    } catch (error) {
+      if (isPrismaError(error, RECORD_NOT_FOUND)) {
+        return null;
+      }
+
+      throw error;
+    }
+  }
+
+  /**
    * Мягкое удаление. `false` ⇒ элемент недоступен, не существует или УЖЕ удалён.
    *
    * `LIVE_ELEMENT_WHERE` в условии делает операцию идемпотентной по состоянию: повторный DELETE
@@ -261,6 +308,40 @@ export class ElementRepository {
     } catch (error) {
       if (isPrismaError(error, RECORD_NOT_FOUND)) {
         return false;
+      }
+
+      throw error;
+    }
+  }
+
+  /**
+   * То же самое, что `softDeleteAccessible`, плюс ожидаемая `version` в том же атомарном
+   * `where` — тот же приём, что у `patchAccessibleVersioned` (см. её докстринг про гонки).
+   * Мягкое удаление — тоже ревизия (SLT-13): устаревшая version отклоняет DELETE точно так же,
+   * как отклонила бы PATCH.
+   *
+   * Выборка — только `id` и `version`: удалённому элементу для WS-broadcast полное состояние
+   * не нужно (см. ElementSyncService) — там летит id + новая version + признак удаления, а не
+   * геометрия только что стёртой фигуры.
+   */
+  async softDeleteAccessibleVersioned(
+    elementId: string,
+    userId: string,
+    expectedVersion: number,
+  ): Promise<{ id: string; version: number } | null> {
+    try {
+      return await this.prisma.element.update({
+        where: {
+          ...accessibleElementScope(elementId, userId),
+          ...LIVE_ELEMENT_WHERE,
+          version: expectedVersion,
+        },
+        data: { deletedAt: new Date(), version: { increment: 1 } },
+        select: { id: true, version: true },
+      });
+    } catch (error) {
+      if (isPrismaError(error, RECORD_NOT_FOUND)) {
+        return null;
       }
 
       throw error;

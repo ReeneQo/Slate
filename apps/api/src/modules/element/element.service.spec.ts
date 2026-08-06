@@ -35,6 +35,7 @@ function createElementEntity(overrides: Partial<ElementEntity> = {}): ElementEnt
     seed: 42,
     order: 1,
     data: { width: 120, height: 80 },
+    version: 0,
     createdAt: CREATED_AT,
     updatedAt: UPDATED_AT,
     ...overrides,
@@ -126,6 +127,12 @@ function createDependencies() {
   const softDeleteAccessible = jest.fn() as jest.MockedFunction<
     ElementRepository['softDeleteAccessible']
   >;
+  const patchAccessibleVersioned = jest.fn() as jest.MockedFunction<
+    ElementRepository['patchAccessibleVersioned']
+  >;
+  const softDeleteAccessibleVersioned = jest.fn() as jest.MockedFunction<
+    ElementRepository['softDeleteAccessibleVersioned']
+  >;
 
   const elementRepository = {
     create,
@@ -134,6 +141,8 @@ function createDependencies() {
     replaceAccessible,
     patchAccessible,
     softDeleteAccessible,
+    patchAccessibleVersioned,
+    softDeleteAccessibleVersioned,
   } satisfies Record<keyof ElementRepository, unknown>;
 
   const assertAccessible = jest.fn() as jest.MockedFunction<BoardService['assertAccessible']>;
@@ -152,6 +161,8 @@ function createDependencies() {
     replaceAccessible,
     patchAccessible,
     softDeleteAccessible,
+    patchAccessibleVersioned,
+    softDeleteAccessibleVersioned,
     assertAccessible,
   };
 }
@@ -535,6 +546,157 @@ describe('ElementService', () => {
       expect(error).toBeInstanceOf(NotFoundException);
       expect(error).not.toBeInstanceOf(ForbiddenException);
       expect((error as NotFoundException).message).toBe('Элемент не найден');
+    });
+  });
+
+  describe('upsertEntity (SLT-38)', () => {
+    it('отдаёт сырую сущность с version — то, чего нет в HTTP-DTO upsert', async () => {
+      const { elementService, findInvariantsIncludingDeleted, create } = createDependencies();
+      findInvariantsIncludingDeleted.mockResolvedValue(null);
+      create.mockResolvedValue({ status: 'created', element: createElementEntity({ version: 0 }) });
+
+      const result = await elementService.upsertEntity(ELEMENT_ID, USER_ID, createUpsertDto());
+
+      expect(result).toEqual({ element: createElementEntity({ version: 0 }), isCreated: true });
+    });
+
+    it('upsert (HTTP) по-прежнему мапит в DTO без version — поведение не изменилось', async () => {
+      const { elementService, findInvariantsIncludingDeleted, create } = createDependencies();
+      findInvariantsIncludingDeleted.mockResolvedValue(null);
+      create.mockResolvedValue({ status: 'created', element: createElementEntity({ version: 0 }) });
+
+      const result = await elementService.upsert(ELEMENT_ID, USER_ID, createUpsertDto());
+
+      expect(result).toEqual({ element: expectedElementDto, isCreated: true });
+      expect(result.element).not.toHaveProperty('version');
+    });
+  });
+
+  describe('patchVersioned (WS, SLT-38)', () => {
+    it('применяет изменение при совпавшей version и не бросает исключений', async () => {
+      const { elementService, patchAccessibleVersioned } = createDependencies();
+      patchAccessibleVersioned.mockResolvedValue(createElementEntity({ x: 99, version: 2 }));
+
+      const result = await elementService.patchVersioned(ELEMENT_ID, USER_ID, { x: 99 }, 1);
+
+      expect(patchAccessibleVersioned).toHaveBeenCalledWith(ELEMENT_ID, USER_ID, 1, {
+        x: 99,
+        y: undefined,
+        angle: undefined,
+        opacity: undefined,
+        stroke: undefined,
+        fill: undefined,
+        strokeWidth: undefined,
+        order: undefined,
+      });
+      expect(result).toEqual({
+        status: 'applied',
+        element: createElementEntity({ x: 99, version: 2 }),
+      });
+    });
+
+    it('на несовпавшую version отдаёт reject с АКТУАЛЬНЫМ элементом, не бросая', async () => {
+      const { elementService, patchAccessibleVersioned, findAccessible } = createDependencies();
+      // Атомарный conditional update не нашёл строку под ожидаемой version.
+      patchAccessibleVersioned.mockResolvedValue(null);
+      // Отдельное чтение ПОСЛЕ отказа — вот откуда в ack берётся свежее состояние для клиента.
+      findAccessible.mockResolvedValue(createElementEntity({ x: 5, version: 7 }));
+
+      const result = await elementService.patchVersioned(ELEMENT_ID, USER_ID, { x: 99 }, 1);
+
+      expect(result).toEqual({
+        status: 'version_conflict',
+        element: createElementEntity({ x: 5, version: 7 }),
+      });
+    });
+
+    it('на элемент вне scope/удалённый/несуществующий отдаёт not_found, а не version_conflict', async () => {
+      const { elementService, patchAccessibleVersioned, findAccessible } = createDependencies();
+      patchAccessibleVersioned.mockResolvedValue(null);
+      // Отдельное чтение тоже пусто — значит дело не в version, элемента вовсе нет под scope.
+      findAccessible.mockResolvedValue(null);
+
+      const result = await elementService.patchVersioned(ELEMENT_ID, USER_ID, { x: 99 }, 1);
+
+      expect(result).toEqual({ status: 'not_found' });
+    });
+
+    it('отвергает пустое изменение как invalid_payload, не сходив в БД', async () => {
+      const { elementService, patchAccessibleVersioned, findAccessible } = createDependencies();
+
+      const result = await elementService.patchVersioned(ELEMENT_ID, USER_ID, {}, 1);
+
+      expect(result).toEqual({ status: 'invalid_payload' });
+      expect(patchAccessibleVersioned).not.toHaveBeenCalled();
+      expect(findAccessible).not.toHaveBeenCalled();
+    });
+
+    it('проверяет присланную геометрию против типа ХРАНИМОГО элемента', async () => {
+      const { elementService, findAccessible, patchAccessibleVersioned } = createDependencies();
+      findAccessible.mockResolvedValue(createElementEntity({ type: 'rect' }));
+
+      const result = await elementService.patchVersioned(
+        ELEMENT_ID,
+        USER_ID,
+        { data: { points: [0, 0, 10, 10] } },
+        1,
+      );
+
+      // Прямоугольнику прислали points линии — geometry не по типу, до записи дело не доходит.
+      expect(result).toEqual({ status: 'invalid_payload' });
+      expect(patchAccessibleVersioned).not.toHaveBeenCalled();
+    });
+
+    it('на отсутствующий элемент при попытке сменить геометрию отдаёт not_found', async () => {
+      const { elementService, findAccessible, patchAccessibleVersioned } = createDependencies();
+      findAccessible.mockResolvedValue(null);
+
+      const result = await elementService.patchVersioned(
+        ELEMENT_ID,
+        USER_ID,
+        { data: { width: 1, height: 1 } },
+        1,
+      );
+
+      expect(result).toEqual({ status: 'not_found' });
+      expect(patchAccessibleVersioned).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('removeVersioned (WS, SLT-38)', () => {
+    it('мягко удаляет при совпавшей version и отдаёт id/новую version', async () => {
+      const { elementService, softDeleteAccessibleVersioned } = createDependencies();
+      softDeleteAccessibleVersioned.mockResolvedValue({ id: ELEMENT_ID, version: 2 });
+
+      const result = await elementService.removeVersioned(ELEMENT_ID, USER_ID, 1);
+
+      expect(softDeleteAccessibleVersioned).toHaveBeenCalledWith(ELEMENT_ID, USER_ID, 1);
+      expect(result).toEqual({ status: 'applied', id: ELEMENT_ID, version: 2 });
+    });
+
+    it('на несовпавшую version отдаёт reject с актуальным элементом', async () => {
+      const { elementService, softDeleteAccessibleVersioned, findAccessible } =
+        createDependencies();
+      softDeleteAccessibleVersioned.mockResolvedValue(null);
+      findAccessible.mockResolvedValue(createElementEntity({ version: 5 }));
+
+      const result = await elementService.removeVersioned(ELEMENT_ID, USER_ID, 1);
+
+      expect(result).toEqual({
+        status: 'version_conflict',
+        element: createElementEntity({ version: 5 }),
+      });
+    });
+
+    it('на чужой/удалённый/несуществующий элемент отдаёт not_found', async () => {
+      const { elementService, softDeleteAccessibleVersioned, findAccessible } =
+        createDependencies();
+      softDeleteAccessibleVersioned.mockResolvedValue(null);
+      findAccessible.mockResolvedValue(null);
+
+      const result = await elementService.removeVersioned(ELEMENT_ID, USER_ID, 1);
+
+      expect(result).toEqual({ status: 'not_found' });
     });
   });
 });

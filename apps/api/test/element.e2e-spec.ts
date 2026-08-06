@@ -1,3 +1,4 @@
+import { ElementRepository } from '../src/modules/element/element.repository';
 import {
   boardElementsUrl,
   type BoardResponse,
@@ -384,6 +385,38 @@ describe('Element (e2e)', () => {
       // приглашают клиента написать собственную проверку удалённости вместо серверной.
       expect(raw).not.toContain('version');
       expect(raw).not.toContain('deletedAt');
+    });
+  });
+
+  describe('оптимистическая блокировка WS-мутаций на живой БД (SLT-38)', () => {
+    it('из двух конкурентных versioned-update с одной version применяется РОВНО один', async () => {
+      // Против настоящего Postgres, не мока: юнит (element.repository.spec) доказывает форму
+      // WHERE живым фейком Prisma, а этот тест — что сама СУБД действительно сериализует два
+      // UPDATE на одну строку и вторая команда реально не находит строку под устаревшей version,
+      // а не что мы правильно угадали поведение Prisma/Postgres в голове.
+      await anna.agent.put(elementUrl(ELEMENT_ID)).send(elementBody(board.id));
+
+      const repository = new ElementRepository(testApp.prisma);
+
+      const [first, second] = await Promise.all([
+        repository.patchAccessibleVersioned(ELEMENT_ID, anna.userId, 0, { x: 111 }),
+        repository.patchAccessibleVersioned(ELEMENT_ID, anna.userId, 0, { x: 222 }),
+      ]);
+
+      const applied = [first, second].filter((result) => result !== null);
+      const rejected = [first, second].filter((result) => result === null);
+
+      // Ровно один выигрывает гонку — read-then-write дал бы шанс обоим применить свою правку.
+      expect(applied).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+
+      const stored = await testApp.prisma.element.findUnique({ where: { id: ELEMENT_ID } });
+
+      // Один-единственный инкремент, не два: подтверждает, что вторая команда не задела строку
+      // вовсе (а не «применилась поверх», просто без видимого эффекта на x).
+      expect(stored?.version).toBe(1);
+      // Итоговый x — от выигравшей команды, какая бы из двух ни победила по MVCC-порядку.
+      expect(stored?.x).toBe(applied[0]?.x);
     });
   });
 });

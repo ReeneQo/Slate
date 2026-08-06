@@ -241,6 +241,78 @@ describe('ElementRepository', () => {
     });
   });
 
+  describe('patchAccessibleVersioned', () => {
+    it('вклеивает ожидаемую version в тот же where, что и scope с live-фильтром', async () => {
+      const { elementRepository, update } = createDependencies();
+      update.mockResolvedValue({});
+
+      await elementRepository.patchAccessibleVersioned(ELEMENT_ID, USER_ID, 3, { x: 99 });
+
+      // Одна SQL-инструкция: version — часть WHERE того же UPDATE, а не отдельная проверка до
+      // записи. Именно это делает conditional update атомарным (см. докстринг метода).
+      expect(update).toHaveBeenCalledWith({
+        where: { ...LIVE_ACCESS_SCOPED_WHERE, version: 3 },
+        data: { x: 99, version: { increment: 1 } },
+        select: ELEMENT_SELECT,
+      });
+    });
+
+    it('на несовпавшую version (P2025) отдаёт null, как и на недоступный элемент', async () => {
+      const { elementRepository, update } = createDependencies();
+      update.mockRejectedValue(prismaError('P2025'));
+
+      // На уровне ЭТОГО запроса «версия устарела» и «элемента нет» неразличимы — оба случая
+      // означают «0 строк под условие» в Postgres. Различает их ElementService отдельным чтением.
+      await expect(
+        elementRepository.patchAccessibleVersioned(ELEMENT_ID, USER_ID, 3, { x: 99 }),
+      ).resolves.toBeNull();
+    });
+
+    it('пробрасывает любую другую ошибку БД', async () => {
+      const { elementRepository, update } = createDependencies();
+      const connectionFailure = new Error('connection terminated');
+      update.mockRejectedValue(connectionFailure);
+
+      await expect(
+        elementRepository.patchAccessibleVersioned(ELEMENT_ID, USER_ID, 3, { x: 99 }),
+      ).rejects.toBe(connectionFailure);
+    });
+
+    it('конкурентность: из двух update с ОДНОЙ version применяется ровно один', async () => {
+      // Живой фейк Prisma, а не два независимых мока с заготовленными ответами: только так
+      // проверка «version в WHERE, а не read-then-write» имеет смысл. Фейк воспроизводит РОВНО
+      // то, что делает Postgres одной SQL-инструкцией — сверяет version и пишет атомарно внутри
+      // ОДНОГО вызова `update`, без промежуточного чтения. Будь репозиторий устроен иначе (сначала
+      // прочитать version, сравнить в коде, потом писать) — окно между чтением и записью позволило
+      // бы обеим сторонам увидеть одну и ту же исходную version и обеим «выиграть». Здесь этого
+      // окна нет: сравнение и запись — один синхронный шаг фейка на каждый вызов.
+      let stored = { id: ELEMENT_ID, version: 1, x: 0 };
+      const racyUpdate = jest.fn((args: { where: { version: number }; data: { x?: number } }) => {
+        if (args.where.version !== stored.version) {
+          return Promise.reject(prismaError('P2025'));
+        }
+
+        stored = { ...stored, x: args.data.x ?? stored.x, version: stored.version + 1 };
+
+        return Promise.resolve({ ...stored });
+      });
+      const prisma = { element: { update: racyUpdate } } as unknown as PrismaService;
+      const elementRepository = new ElementRepository(prisma);
+
+      const [first, second] = await Promise.all([
+        elementRepository.patchAccessibleVersioned(ELEMENT_ID, USER_ID, 1, { x: 10 }),
+        elementRepository.patchAccessibleVersioned(ELEMENT_ID, USER_ID, 1, { x: 20 }),
+      ]);
+
+      const applied = [first, second].filter((result) => result !== null);
+      const rejected = [first, second].filter((result) => result === null);
+
+      expect(applied).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(stored.version).toBe(2);
+    });
+  });
+
   describe('softDeleteAccessible', () => {
     it('ставит deletedAt вместо удаления строки', async () => {
       const { elementRepository, update } = createDependencies();
@@ -276,6 +348,42 @@ describe('ElementRepository', () => {
       await expect(elementRepository.softDeleteAccessible(ELEMENT_ID, USER_ID)).rejects.toBe(
         connectionFailure,
       );
+    });
+  });
+
+  describe('softDeleteAccessibleVersioned', () => {
+    it('вклеивает ожидаемую version в where и отдаёт только id/version', async () => {
+      const { elementRepository, update } = createDependencies();
+      update.mockResolvedValue({ id: ELEMENT_ID, version: 4 });
+
+      await expect(
+        elementRepository.softDeleteAccessibleVersioned(ELEMENT_ID, USER_ID, 3),
+      ).resolves.toEqual({ id: ELEMENT_ID, version: 4 });
+
+      expect(update).toHaveBeenCalledWith({
+        where: { ...LIVE_ACCESS_SCOPED_WHERE, version: 3 },
+        data: { deletedAt: expect.any(Date) as Date, version: { increment: 1 } },
+        select: { id: true, version: true },
+      });
+    });
+
+    it('на несовпавшую version отдаёт null — то же P2025, что и на недоступный элемент', async () => {
+      const { elementRepository, update } = createDependencies();
+      update.mockRejectedValue(prismaError('P2025'));
+
+      await expect(
+        elementRepository.softDeleteAccessibleVersioned(ELEMENT_ID, USER_ID, 3),
+      ).resolves.toBeNull();
+    });
+
+    it('пробрасывает любую другую ошибку БД', async () => {
+      const { elementRepository, update } = createDependencies();
+      const connectionFailure = new Error('connection terminated');
+      update.mockRejectedValue(connectionFailure);
+
+      await expect(
+        elementRepository.softDeleteAccessibleVersioned(ELEMENT_ID, USER_ID, 3),
+      ).rejects.toBe(connectionFailure);
     });
   });
 });
