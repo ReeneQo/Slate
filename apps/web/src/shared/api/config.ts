@@ -24,3 +24,15 @@ export function buildUrl(path: string): string {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   return `${API_BASE_URL}${normalizedPath}`;
 }
+
+/**
+ * Базовый URL ws-сервера (SLT-37). Тот же Nest-инстанс, что и HTTP API, но БЕЗ префикса `/api`:
+ * socket.io слушает на корне HTTP-сервера (`/socket.io`), а не под Nest global prefix. Поэтому
+ * это не отдельная переменная окружения, а тот же `VITE_API_URL` с отрезанным `/api` — один
+ * источник адреса бэка, а не два, которые могут разъехаться.
+ *
+ * Пустая строка (same-origin прод-фолбэк из API_BASE_URL) — валидный URL для socket.io-client:
+ * `io('')` трактуется как «текущий origin», ровно то же поведение, что у fetch с относительным
+ * path.
+ */
+export const SOCKET_URL = API_BASE_URL.replace(/\/api\/?$/, '');

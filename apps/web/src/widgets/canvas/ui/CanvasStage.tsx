@@ -9,9 +9,11 @@ import { Toolbar } from '@/features/toolbar';
 
 import { useCanvasHotkeys } from '../lib/useCanvasHotkeys';
 import { useCanvasInteraction } from '../lib/useCanvasInteraction';
+import { useCursorBroadcast } from '../lib/useCursorBroadcast';
 import { useViewportSize } from '../lib/useViewportSize';
 import { useEditorStore } from '../model/editor.store';
 import { ElementShape } from './ElementShape';
+import { RemoteCursorsLayer } from './RemoteCursorsLayer';
 import { ShapeRenderer } from './ShapeRenderer';
 
 /**
@@ -57,6 +59,9 @@ export function CanvasStage(): ReactElement {
   // Клавиатурный ввод холста (Delete/Backspace → удаление выделения). Отдельный
   // window-listener, поэтому Stage-фокус не нужен.
   useCanvasHotkeys();
+  // Ретрансляция СВОЕГО курсора остальным участникам (SLT-37) — независимый от useCanvasInteraction
+  // поток, вешается на обёртку Stage нативными onMouseMove/onMouseLeave (не на Konva-обработчики).
+  const { onPointerMove, onPointerLeave } = useCursorBroadcast();
 
   const viewport = useEditorStore((state) => state.viewport);
   const draft = useEditorStore((state) => state.draft);
@@ -88,7 +93,12 @@ export function CanvasStage(): ReactElement {
 
   return (
     <>
-      <div className="fixed inset-0 bg-canvas" style={{ cursor }}>
+      <div
+        className="fixed inset-0 bg-canvas"
+        style={{ cursor }}
+        onMouseMove={onPointerMove}
+        onMouseLeave={onPointerLeave}
+      >
         <Stage
           width={width}
           height={height}
@@ -120,6 +130,7 @@ export function CanvasStage(): ReactElement {
               borderDash={[4, 4]}
             />
           </Layer>
+          <RemoteCursorsLayer scale={viewport.scale} />
         </Stage>
       </div>
       <Toolbar selectedTool={selectedTool} onSelectTool={setTool} />

@@ -1,12 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import { RedisService } from '../../infrastructure/redis/redis.service';
+import { UserService } from '../user/user.service';
 import {
   type AppServer,
   type AppSocket,
   boardIdsFromRooms,
   boardRoom,
   extractBoardId,
+  type PresenceUser,
 } from './realtime.types';
 
 /** Порог офлайна: 60с молчания = 3 пропущенных heartbeat (клиент шлёт `presence_ping` раз в 20с). */
@@ -56,7 +58,10 @@ function userIdFromMember(member: string): string {
 export class PresenceService {
   private readonly logger = new Logger(PresenceService.name);
 
-  constructor(private readonly redis: RedisService) {}
+  constructor(
+    private readonly redis: RedisService,
+    private readonly userService: UserService,
+  ) {}
 
   /**
    * Сокет входит в presence доски (после успешного `join_board`, см. RealtimeGateway). ZADD
@@ -86,11 +91,13 @@ export class PresenceService {
 
     if (!wasOnline) {
       this.logger.debug(`Presence join: user=${userId} board=${boardId}`);
-      socket.to(boardRoom(boardId)).emit('presence_join', { userId });
+      const displayName = await this.resolveDisplayName(userId);
+      socket.to(boardRoom(boardId)).emit('presence_join', { userId, displayName });
     }
 
-    const snapshot = [...(await this.readAliveUserIds(boardId, now))];
-    socket.emit('presence_snapshot', { userIds: snapshot });
+    const snapshotUserIds = [...(await this.readAliveUserIds(boardId, now))];
+    const users = await this.resolvePresenceUsers(snapshotUserIds);
+    socket.emit('presence_snapshot', { users });
   }
 
   /** Явный выход сокета (`leave_board`). Симметричен `join`, без снимка — выходящему он не нужен. */
@@ -191,6 +198,25 @@ export class PresenceService {
       this.logger.debug(`Presence leave: user=${userId} board=${boardId}`);
       socket.to(boardRoom(boardId)).emit('presence_leave', { userId });
     }
+  }
+
+  /**
+   * Имя одного юзера для `presence_join`. `userId` в socket.data происходит из живой сессии
+   * (foreign key на users), поэтому запись обязана существовать — `?? userId` тут не «правильный»
+   * fallback на удалённого юзера, а страховка от гонки типа Optional у Prisma-клиента, не более.
+   */
+  private async resolveDisplayName(userId: string): Promise<string> {
+    const user = await this.userService.findById(userId);
+    return user?.displayName ?? userId;
+  }
+
+  /**
+   * Batch-резолв снимка: ОДИН запрос на весь список онлайна (см. UserService.findManyByIds),
+   * а не N штук в цикле — снимок может перечислять много участников разом.
+   */
+  private async resolvePresenceUsers(userIds: string[]): Promise<PresenceUser[]> {
+    const users = await this.userService.findManyByIds(userIds);
+    return users.map((user) => ({ userId: user.id, displayName: user.displayName }));
   }
 
   /** Чистое чтение живых userId (score в пределах порога) — БЕЗ побочной уборки Redis. */

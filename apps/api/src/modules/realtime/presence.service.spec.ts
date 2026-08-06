@@ -1,6 +1,8 @@
 import type { RedisService } from '../../infrastructure/redis/redis.service';
+import type { SafeUser } from '../user/entities/user.entity';
+import type { UserService } from '../user/user.service';
 import { PresenceService } from './presence.service';
-import type { AppServer, AppSocket } from './realtime.types';
+import type { AppServer, AppSocket, PresenceUser } from './realtime.types';
 
 /**
  * Юнит PresenceService изолирует ровно правила sorted-set-логики: кто онлайн, когда эмитится
@@ -18,8 +20,41 @@ const BOARD_ID = '019fa5b1-0000-7000-8000-000000000001';
 const BOARD_ROOM = `board:${BOARD_ID}`;
 const USER_ID = '019fa40d-6841-70ed-8b1d-7c64e6411bd6';
 const OTHER_USER_ID = '019fa40d-6841-70ed-8b1d-7c64e6411bd7';
+const DISPLAY_NAME = 'Алиса';
+const OTHER_DISPLAY_NAME = 'Боб';
 
 const ONLINE_THRESHOLD_MS = 60_000;
+
+function fakeSafeUser(id: string, displayName: string): SafeUser {
+  return {
+    id,
+    email: `${id}@example.test`,
+    displayName,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+  };
+}
+
+/**
+ * Живая заглушка UserService: только findById/findManyByIds, которых касается PresenceService —
+ * тем же приёмом, что FakeSortedSetRedis рядом (реальное поведение маленького хранилища в памяти,
+ * а не мок отдельных вызовов). Незнакомый id ⇒ findById возвращает null, findManyByIds его просто
+ * не включает — так же, как повёл бы себя реальный `WHERE id IN (...)` на удалённого юзера.
+ */
+class FakeUserService {
+  private readonly usersById = new Map<string, SafeUser>([
+    [USER_ID, fakeSafeUser(USER_ID, DISPLAY_NAME)],
+    [OTHER_USER_ID, fakeSafeUser(OTHER_USER_ID, OTHER_DISPLAY_NAME)],
+  ]);
+
+  findById(id: string): Promise<SafeUser | null> {
+    return Promise.resolve(this.usersById.get(id) ?? null);
+  }
+
+  findManyByIds(ids: string[]): Promise<SafeUser[]> {
+    return Promise.resolve(ids.flatMap((id) => this.usersById.get(id) ?? []));
+  }
+}
 
 /** Живой фейк одного Redis sorted set — ровно те команды, которыми пользуется PresenceService. */
 class FakeSortedSetRedis {
@@ -91,7 +126,11 @@ function parseBound(bound: string): [number, boolean] {
 
 function createService() {
   const redis = new FakeSortedSetRedis();
-  const service = new PresenceService({ client: redis } as unknown as RedisService);
+  const userService = new FakeUserService();
+  const service = new PresenceService(
+    { client: redis } as unknown as RedisService,
+    userService as unknown as UserService,
+  );
   return { service, redis };
 }
 
@@ -121,7 +160,7 @@ describe('PresenceService', () => {
     jest.useRealTimers();
   });
 
-  it('вход сокета добавляет member в sorted set, список онлайна содержит userId, эмитятся join и snapshot', async () => {
+  it('вход сокета добавляет member в sorted set, список онлайна содержит userId, эмитятся join и snapshot с displayName', async () => {
     // Arrange
     const { service } = createService();
     const { socket, to, toEmit, emit } = fakeSocket(USER_ID, 'socket-1');
@@ -132,8 +171,32 @@ describe('PresenceService', () => {
     // Assert
     expect(await service.getOnlineUserIds(BOARD_ID)).toEqual([USER_ID]);
     expect(to).toHaveBeenCalledWith(BOARD_ROOM);
-    expect(toEmit).toHaveBeenCalledWith('presence_join', { userId: USER_ID });
-    expect(emit).toHaveBeenCalledWith('presence_snapshot', { userIds: [USER_ID] });
+    expect(toEmit).toHaveBeenCalledWith('presence_join', {
+      userId: USER_ID,
+      displayName: DISPLAY_NAME,
+    });
+    expect(emit).toHaveBeenCalledWith('presence_snapshot', {
+      users: [{ userId: USER_ID, displayName: DISPLAY_NAME }],
+    });
+  });
+
+  it('снимок резолвит displayName нескольких юзеров одним batch-запросом, а не по одному', async () => {
+    // Arrange
+    const { service } = createService();
+    const { socket: userSocket } = fakeSocket(USER_ID, 'socket-1');
+    const { socket: otherSocket, emit: otherEmit } = fakeSocket(OTHER_USER_ID, 'socket-2');
+
+    // Act
+    await service.join(userSocket, { boardId: BOARD_ID });
+    await service.join(otherSocket, { boardId: BOARD_ID });
+
+    // Assert: снимок второму входящему сокету содержит ОБОИХ участников с именами
+    expect(otherEmit).toHaveBeenCalledWith('presence_snapshot', {
+      users: expect.arrayContaining([
+        { userId: USER_ID, displayName: DISPLAY_NAME },
+        { userId: OTHER_USER_ID, displayName: OTHER_DISPLAY_NAME },
+      ]) as PresenceUser[],
+    });
   });
 
   it('игнорирует join/leave с кривым payload, не трогая sorted set', async () => {

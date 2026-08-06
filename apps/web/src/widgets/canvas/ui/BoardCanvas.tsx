@@ -1,5 +1,7 @@
 import type { ReactElement } from 'react';
 
+import { PresenceBar, useRealtimePresence } from '@/features/realtime-presence';
+
 import { useCanvasSync } from '../lib/useCanvasSync';
 import { CanvasStage } from './CanvasStage';
 import { SyncErrorBanner } from './SyncErrorBanner';
@@ -10,13 +12,15 @@ interface BoardCanvasProps {
 }
 
 /**
- * Виджет холста доски: соединяет Konva-шелл (CanvasStage) с бэком через useCanvasSync (SLT-27).
- * Гидрация грузит фигуры доски, autosave шлёт изменения назад. До готовности холст не монтируем —
- * это заодно закрывает гонку «нарисовал раньше, чем догрузилось»: пока грузим, Stage нет, значит и
- * пользовательских изменений нет.
+ * Виджет холста доски: соединяет Konva-шелл (CanvasStage) с бэком через useCanvasSync (SLT-27) и
+ * с realtime-presence (SLT-37) через useRealtimePresence — независимые потоки, документ и
+ * presence/курсоры не знают друг о друге. До готовности холст не монтируем — это заодно закрывает
+ * гонку «нарисовал раньше, чем догрузилось»: пока грузим, Stage нет, значит и пользовательских
+ * изменений нет.
  */
 export function BoardCanvas({ boardId }: BoardCanvasProps): ReactElement {
   const { hydration, hasSaveError, retryHydration } = useCanvasSync(boardId);
+  useRealtimePresence(boardId);
 
   if (hydration === 'loading') {
     return <CanvasMessage>Загрузка доски…</CanvasMessage>;
@@ -40,6 +44,7 @@ export function BoardCanvas({ boardId }: BoardCanvasProps): ReactElement {
   return (
     <>
       {hasSaveError && <SyncErrorBanner />}
+      <PresenceBar />
       <CanvasStage />
     </>
   );
