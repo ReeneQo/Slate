@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { ElementType } from '@slate/database';
-import { type ElementData, parseElementData } from '@slate/shared-types';
+import { type ElementData, parseElementData, type PatchElementInput } from '@slate/shared-types';
 
 import { boardNotFound, BoardService } from '../board/board.service';
 import { type ElementDto, toElementDto } from './dto/element.dto';
@@ -16,6 +16,7 @@ import {
   type PatchElementData,
   type ReplaceElementData,
 } from './element.repository';
+import type { ElementEntity } from './entities/element.entity';
 
 /**
  * Результат upsert'а. Флаг нужен ровно одному месту — контроллеру, который выбирает между 201
@@ -26,6 +27,23 @@ export interface UpsertElementResult {
   element: ElementDto;
   isCreated: boolean;
 }
+
+/**
+ * Исход версионированного PATCH (SLT-38, `ElementService.patchVersioned`). Формой похож на
+ * `CreateElementOutcome` репозитория: конечный набор случаев решает вызывающий, а не try/catch
+ * по HTTP-исключениям — реалтайм-слой их не бросает (см. докстринг `patchVersioned`).
+ */
+export type VersionedPatchOutcome =
+  | { status: 'applied'; element: ElementEntity }
+  | { status: 'not_found' }
+  | { status: 'invalid_payload' }
+  | { status: 'version_conflict'; element: ElementEntity };
+
+/** Исход версионированного DELETE (SLT-38, `ElementService.removeVersioned`). См. `VersionedPatchOutcome`. */
+export type VersionedRemovalOutcome =
+  | { status: 'applied'; id: string; version: number }
+  | { status: 'not_found' }
+  | { status: 'version_conflict'; element: ElementEntity };
 
 /**
  * Бизнес-логика элемента холста. PrismaService не инжектит и не импортирует — в БД ходит
@@ -78,6 +96,26 @@ export class ElementService {
     userId: string,
     dto: UpsertElementDto,
   ): Promise<UpsertElementResult> {
+    const { element, isCreated } = await this.upsertEntity(elementId, userId, dto);
+
+    return { element: toElementDto(element), isCreated };
+  }
+
+  /**
+   * То же самое, что `upsert`, но отдаёт СЫРУЮ сущность вместо HTTP DTO.
+   *
+   * Единственная причина существования метода рядом с `upsert` — version. WS-каналу мутаций
+   * (SLT-38, `element_create`) она нужна для ack и broadcast, а HTTP-контракт её сознательно не
+   * показывает (см. ELEMENT_SELECT / toElementDto). Вся бизнес-логика — целиком здесь, ОДНА
+   * точка на оба входа; `upsert` — тонкая обёртка, которая просто мапит результат в DTO для
+   * HTTP-ответа. Поведение и исключения HTTP-пути не меняются ни на бит: это чистый вынос кода,
+   * а не новая ветка.
+   */
+  async upsertEntity(
+    elementId: string,
+    userId: string,
+    dto: UpsertElementDto,
+  ): Promise<{ element: ElementEntity; isCreated: boolean }> {
     const shape = toElementShape(dto, this.parseData(dto.type, dto.data));
     const existing = await this.elementRepository.findInvariantsIncludingDeleted(elementId, userId);
 
@@ -110,7 +148,97 @@ export class ElementService {
       throw elementNotFound();
     }
 
-    return { element: toElementDto(element), isCreated: false };
+    return { element, isCreated: false };
+  }
+
+  /**
+   * Версионированное частичное обновление (WS `element_update`, SLT-38): то же правило, что у
+   * `patch`, плюс оптимистическая блокировка — и, в отличие от `patch`, отдаёт ИСХОД, а не
+   * бросает HTTP-исключения. Реалтайм-слой не работает с NestJS-статусами: отказ едет назад
+   * ack-callback'ом с доменной причиной (см. RealtimeGateway/ElementSyncService), а не как
+   * `NotFoundException`/`BadRequestException` — тот же принцип, что развёл `assertAccessible` и
+   * `canAccess` у доски.
+   *
+   * `version_conflict` несёт АКТУАЛЬНЫЙ элемент — не потому что репозиторий его вернул (при
+   * несовпадении version `patchAccessibleVersioned` отдаёт `null`, теряя строку), а отдельным
+   * чтением ПОСЛЕ отказа: клиенту (SLT-40) нужно свежее состояние для refetch-and-reapply без
+   * лишнего round-trip'а. Отдельным запросом также различаются «элемента нет вовсе» и «версия
+   * устарела» — на уровне самого conditional update это одно и то же P2025/`null`.
+   */
+  async patchVersioned(
+    elementId: string,
+    userId: string,
+    changes: PatchElementInput,
+    expectedVersion: number,
+  ): Promise<VersionedPatchOutcome> {
+    const patchChanges = toPatchChanges(changes);
+    const hasGeometryChange = changes.data !== undefined;
+
+    if (!hasGeometryChange && !hasAnyChange(patchChanges)) {
+      return { status: 'invalid_payload' };
+    }
+
+    let geometry: ElementData | undefined;
+
+    if (hasGeometryChange) {
+      const stored = await this.elementRepository.findAccessible(elementId, userId);
+
+      if (stored === null) {
+        return { status: 'not_found' };
+      }
+
+      const result = parseElementData(stored.type, changes.data);
+
+      if (!result.isValid) {
+        return { status: 'invalid_payload' };
+      }
+
+      geometry = result.data;
+    }
+
+    const element = await this.elementRepository.patchAccessibleVersioned(
+      elementId,
+      userId,
+      expectedVersion,
+      { ...patchChanges, ...(geometry === undefined ? {} : { data: geometry }) },
+    );
+
+    if (element !== null) {
+      return { status: 'applied', element };
+    }
+
+    const current = await this.elementRepository.findAccessible(elementId, userId);
+
+    return current === null
+      ? { status: 'not_found' }
+      : { status: 'version_conflict', element: current };
+  }
+
+  /**
+   * Версионированное мягкое удаление (WS `element_delete`, SLT-38). Тот же исходный принцип,
+   * что у `patchVersioned`: исход вместо исключения, актуальный элемент в `version_conflict` —
+   * отдельным чтением после отказа.
+   */
+  async removeVersioned(
+    elementId: string,
+    userId: string,
+    expectedVersion: number,
+  ): Promise<VersionedRemovalOutcome> {
+    const removed = await this.elementRepository.softDeleteAccessibleVersioned(
+      elementId,
+      userId,
+      expectedVersion,
+    );
+
+    if (removed !== null) {
+      return { status: 'applied', id: removed.id, version: removed.version };
+    }
+
+    const current = await this.elementRepository.findAccessible(elementId, userId);
+
+    return current === null
+      ? { status: 'not_found' }
+      : { status: 'version_conflict', element: current };
   }
 
   /**
@@ -184,14 +312,14 @@ export class ElementService {
     userId: string,
     boardId: string,
     shape: ReplaceElementData,
-  ): Promise<UpsertElementResult> {
+  ): Promise<{ element: ElementEntity; isCreated: boolean }> {
     await this.boardService.assertAccessible(boardId, userId);
 
     const outcome = await this.elementRepository.create({ id: elementId, boardId, ...shape });
 
     switch (outcome.status) {
       case 'created':
-        return { element: toElementDto(outcome.element), isCreated: true };
+        return { element: outcome.element, isCreated: true };
       case 'board-missing':
         throw boardNotFound();
       case 'id-taken':
@@ -269,7 +397,7 @@ function toElementShape(dto: UpsertElementDto, data: ElementData): ReplaceElemen
  * Prisma не включит такую колонку в UPDATE. А вот `fill: null` — присланное значение, оно
  * доедет до базы и снимет заливку.
  */
-function toPatchChanges(dto: PatchElementDto): PatchElementData {
+function toPatchChanges(dto: PatchElementDto | PatchElementInput): PatchElementData {
   return {
     x: dto.x,
     y: dto.y,

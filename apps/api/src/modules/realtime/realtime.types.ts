@@ -1,4 +1,13 @@
+import {
+  type PatchElementInput,
+  patchElementSchema,
+  type UpsertElementInput,
+} from '@slate/shared-types';
 import type { Server, Socket } from 'socket.io';
+import { z } from 'zod';
+
+import { type ElementDto, toElementDto } from '../element/dto/element.dto';
+import type { ElementEntity } from '../element/entities/element.entity';
 
 /**
  * Типы транспорта realtime. Фундамент этапа 3 (SLT-32) — соединение и его аутентификация,
@@ -163,6 +172,162 @@ export function extractCursorPosition(payload: unknown): CursorPosition | null {
 }
 
 /**
+ * Синхронизация мутаций элементов (SLT-38, 3.3) — сервер начинает диктовать изменения обратно
+ * клиентам, впервые с начала этапа 3. Три входящих события, по одному на операцию
+ * (`element_create`/`element_update`/`element_delete`), поверх той же room-модели (SLT-33):
+ * сокет обязан состоять в комнате `board:<boardId>`, иначе мутация отклоняется ДО обращения к
+ * персист-слою — форма ошибки та же (`access_denied`), что и остальные причины отказа, ack'ом.
+ *
+ * ПОЧЕМУ ТРИ СОБЫТИЯ, А НЕ ОДНО `element_mutated` С ТИПОМ ОПЕРАЦИИ В ПОЛЕ. Разные payload'ы
+ * (create несёт полную форму фигуры, delete — только id/version) означали бы либо union по
+ * дискриминатору внутри одного события (клиент разбирает вручную), либо раздутый общий тип с
+ * опциональными полями под каждую операцию. Прецедент в этом же файле — presence_join/leave и
+ * cursor_move/leave: везде выбраны раздельные события с точной формой, а не общий конверт с
+ * discriminator'ом. Три события здесь — то же самое решение, применённое ещё раз для
+ * согласованности транспорта.
+ *
+ * ПОЧЕМУ ZOD, А НЕ РУЧНЫЕ extract*-ФУНКЦИИ (как у cursor/presence). Форма элемента — 10+ полей
+ * с диапазонами (opacity, strokeWidth) и дискриминированной по `type` геометрией. Она уже
+ * описана ОДИН раз как `upsertElementSchema`/`patchElementSchema` в @slate/shared-types (SLT-23)
+ * — тем же кодом, которым её проверяет HTTP-путь и фронт. Переписать это вручную здесь значило
+ * бы завести вторую копию тех же правил валидации, которая рано или поздно разойдётся с первой.
+ * `zod` — не новая зависимость: она уже в apps/api (см. config/env.schema.ts), просто впервые
+ * применяется к WS-payload'у.
+ *
+ * КОНТРАКТ ЭЛЕМЕНТА НЕ ДУБЛИРУЕТСЯ: `ElementCreatePayload`/`ElementSyncDto` строятся ПОВЕРХ
+ * `UpsertElementInput`/`ElementDto` (импорт из @slate/shared-types и element-модуля), а не
+ * переписывают форму элемента заново, — ровно то ограничение, о котором просит SLT-38.
+ */
+
+/** UUID id из payload'а недоверенного события. `null` ⇒ поля нет, оно не строка или не UUID. */
+export function extractElementId(payload: unknown): string | null {
+  if (typeof payload !== 'object' || payload === null) {
+    return null;
+  }
+
+  const { id } = payload as { id?: unknown };
+
+  return typeof id === 'string' && z.uuid().safeParse(id).success ? id : null;
+}
+
+/**
+ * Состоит ли сокет ПРЯМО СЕЙЧАС в комнате указанной доски. Авторизация WS-мутаций элемента:
+ * членство проверяется по факту (`join_board`, SLT-33), а не переспрашивается у BoardService —
+ * повторный поход в БД на КАЖДУЮ мутацию (autosave-путь, десятки в минуту) был бы лишним
+ * round-trip'ом поверх того, что комната и так уже это гарантирует.
+ */
+export function isInBoardRoom(socket: AppSocket, boardId: string): boolean {
+  return socket.rooms.has(boardRoom(boardId));
+}
+
+/**
+ * Элемент в WS-контракте: форма ElementDto (HTTP) плюс `version` — то, что PATCH/PUT по HTTP
+ * сознательно скрывают (SLT-13/20), а WS-мутациям обязана видеть: следующая правка клиента
+ * несёт version ИМЕННО отсюда как ожидаемую. Долг реестра SLT-22 (version наружу) закрывается
+ * здесь, а не в HTTP-DTO — см. решение в element.dto.ts.
+ */
+export interface ElementSyncDto extends ElementDto {
+  version: number;
+}
+
+/** Сущность → WS-DTO. Переиспользует `toElementDto` (не копирует поля) и добавляет version. */
+export function toElementSyncDto(element: ElementEntity): ElementSyncDto {
+  return { ...toElementDto(element), version: element.version };
+}
+
+/**
+ * Payload `element_create`: полная форма фигуры (та же, что PUT-тело — `UpsertElementInput`)
+ * плюс клиентский `id` (на HTTP он едет в URL, здесь URL нет — только payload).
+ */
+export type ElementCreatePayload = UpsertElementInput & { id: string };
+
+/** Payload `element_update`: адрес + изменения (форма PATCH-тела) + ожидаемая version. */
+export interface ElementUpdatePayload {
+  boardId: string;
+  id: string;
+  version: number;
+  changes: PatchElementInput;
+}
+
+/** Payload `element_delete`: адрес + ожидаемая version — тела для удаления не требуется. */
+export interface ElementDeletePayload {
+  boardId: string;
+  id: string;
+  version: number;
+}
+
+/** Форма `changes` в `element_update`, включая пустое тело — валидность решает ElementService. */
+export const elementUpdatePayloadSchema = z.object({
+  boardId: z.uuid(),
+  id: z.uuid(),
+  version: z.number().int().nonnegative(),
+  changes: patchElementSchema,
+});
+
+/** Форма `element_delete` — то же адресное трио, без `changes`. */
+export const elementDeletePayloadSchema = z.object({
+  boardId: z.uuid(),
+  id: z.uuid(),
+  version: z.number().int().nonnegative(),
+});
+
+/**
+ * Причина отказа мутации, различимая в ack (SLT-38):
+ *  - `access_denied` — сокет не в комнате доски из payload'а;
+ *  - `not_found` — элемент недоступен/не существует/удалён (update/delete) или доска исчезла
+ *    между проверкой и записью (create, симметрично HTTP board-missing);
+ *  - `version_conflict` — update/delete: ожидаемая version устарела (несёт актуальный элемент);
+ *  - `conflict` — create: id занят элементом другой доски ИЛИ смена типа существующего элемента
+ *    (оба случая — 409-правило SLT-20, сохранённое здесь без изменений);
+ *  - `invalid_payload` — форма не прошла zod/доменную проверку (в т.ч. геометрия не по типу).
+ */
+export type ElementMutationRejectReason =
+  | 'access_denied'
+  | 'not_found'
+  | 'version_conflict'
+  | 'conflict'
+  | 'invalid_payload';
+
+/** Ack `element_create`. */
+export type ElementCreateAckResult =
+  | { ok: true; element: ElementSyncDto }
+  | { ok: false; reason: Exclude<ElementMutationRejectReason, 'version_conflict'> };
+
+/**
+ * Ack `element_update`. `version_conflict` — единственная причина, несущая элемент (см.
+ * ElementMutationRejectReason): клиенту нужно свежее состояние для refetch-and-reapply (SLT-40).
+ */
+export type ElementUpdateAckResult =
+  | { ok: true; element: ElementSyncDto }
+  | { ok: false; reason: 'version_conflict'; element: ElementSyncDto }
+  | { ok: false; reason: Exclude<ElementMutationRejectReason, 'version_conflict' | 'conflict'> };
+
+/** Ack `element_delete`. Успех несёт не элемент, а id/version — удалённой фигуре нечего слать. */
+export type ElementDeleteAckResult =
+  | { ok: true; id: string; version: number }
+  | { ok: false; reason: 'version_conflict'; element: ElementSyncDto }
+  | { ok: false; reason: Exclude<ElementMutationRejectReason, 'version_conflict' | 'conflict'> };
+
+/**
+ * Broadcast `element_created`/`element_updated`: ПОЛНЫЙ элемент, не дельта. Идемпотентность
+ * (применить дважды — тот же результат), простота на клиенте (замена целиком, не мерж) и
+ * устойчивость к пропущенным событиям (каждое сообщение самодостаточно) — см. класс-докстринг
+ * ElementSyncService. `userId` — метаданные автора (кто изменил), НЕ механизм анти-эха: анти-эхо
+ * даёт `socket.to` (физическое неполучение своего же события отправителем).
+ */
+export interface ElementBroadcastPayload {
+  element: ElementSyncDto;
+  userId: string;
+}
+
+/** Broadcast `element_deleted`: id + новая version + признак удаления — геометрии в нём уже нет. */
+export interface ElementDeletedBroadcastPayload {
+  id: string;
+  version: number;
+  userId: string;
+}
+
+/**
  * События клиент→сервер (SLT-33/35/36):
  *   - `join_board` несёт ack — вход авторизуется (см. BoardRoomService), и исход обязан вернуться;
  *   - `leave_board` без ack — выход из комнаты не может быть отклонён (проверять нечего) и
@@ -182,6 +347,21 @@ export interface ClientToServerEvents {
   presence_ping: () => void;
   cursor_move: (payload: CursorPosition) => void;
   cursor_leave: () => void;
+  /** Создание/замена/воскрешение элемента (SLT-38) — ack обязателен, как у join_board. */
+  element_create: (
+    payload: ElementCreatePayload,
+    ack: (result: ElementCreateAckResult) => void,
+  ) => void;
+  /** Версионированное частичное обновление элемента (SLT-38). */
+  element_update: (
+    payload: ElementUpdatePayload,
+    ack: (result: ElementUpdateAckResult) => void,
+  ) => void;
+  /** Версионированное мягкое удаление элемента (SLT-38). */
+  element_delete: (
+    payload: ElementDeletePayload,
+    ack: (result: ElementDeleteAckResult) => void,
+  ) => void;
 }
 
 /**
@@ -201,6 +381,10 @@ export interface ServerToClientEvents {
   presence_leave: (payload: PresenceDeltaPayload) => void;
   cursor_move: (payload: CursorMovePayload) => void;
   cursor_leave: (payload: CursorLeavePayload) => void;
+  /** Мутация применена другим участником комнаты (SLT-38) — полный элемент, не дельта. */
+  element_created: (payload: ElementBroadcastPayload) => void;
+  element_updated: (payload: ElementBroadcastPayload) => void;
+  element_deleted: (payload: ElementDeletedBroadcastPayload) => void;
 }
 
 /**

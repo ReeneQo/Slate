@@ -41,6 +41,7 @@ function createElementEntity(overrides: Partial<ElementEntity> = {}): ElementEnt
     seed: 42,
     order: 1,
     data: { width: 120, height: 80 },
+    version: 0,
     createdAt: CREATED_AT,
     updatedAt: UPDATED_AT,
     ...overrides,

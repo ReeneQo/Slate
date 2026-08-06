@@ -20,7 +20,11 @@ import type { ElementEntity } from '../entities/element.entity';
  * там именно JSON) и безопаснее `any` — сузить его всё равно придётся явно. Настоящую
  * проверку формы даст zod-схема в packages/shared-types, когда контракты туда переедут.
  *
- * `version` и `deletedAt` в контракте отсутствуют — их нет и в выборке (см. ELEMENT_SELECT).
+ * `deletedAt` в контракте отсутствует — его нет и в выборке (см. ELEMENT_SELECT). `version`
+ * в выборке ЕСТЬ (SLT-38, нужен WS-оптимистической блокировке), но в этот DTO не попадает —
+ * `toElementDto` ниже перечисляет поля поимённо и `version` среди них нет. HTTP-контракт
+ * элемента им сознательно не пополняется; WS-контракт (SLT-38) отдаёт version через свой
+ * собственный маппер `toElementSyncDto` в realtime-модуле, а не через этот.
  */
 export interface ElementDto {
   id: string;
@@ -41,9 +45,10 @@ export interface ElementDto {
 }
 
 /**
- * Маппер сущность → DTO. Как и у доски, поля перечислены поимённо: `version` и `deletedAt`
- * не должны попасть в ответ, даже если однажды окажутся в ELEMENT_SELECT (а окажутся —
- * version понадобится этапу 3, deletedAt пригодится реалтайму для отмены удаления).
+ * Маппер сущность → DTO. Как и у доски, поля перечислены поимённо: `version` (теперь есть в
+ * ELEMENT_SELECT, SLT-38) и `deletedAt` намеренно не попадают в HTTP-ответ. `deletedAt` не
+ * нужен вовсе (выборка и так только живые элементы), `version` нужен, но другому потребителю —
+ * WS-контракту (см. toElementSyncDto в realtime-модуле), не этому DTO.
  */
 export function toElementDto(element: ElementEntity): ElementDto {
   return {
