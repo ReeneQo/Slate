@@ -100,30 +100,86 @@ export interface PresenceDeltaPayload {
 }
 
 /**
- * События клиент→сервер (SLT-33/35):
+ * Координаты курсора в МИРОВОЙ системе координат холста (не экранных пикселях) — конверсия
+ * мир↔экран целиком на фронте (SLT-37), сервер числа не интерпретирует, только валидирует форму
+ * и ретранслирует. Диапазон намеренно не ограничен: холст бесконечный, любые конечные x/y валидны.
+ */
+export interface CursorPosition {
+  x: number;
+  y: number;
+}
+
+/** Payload исходящего `cursor_move`: координаты плюс userId отправителя (добавляет сервер). */
+export interface CursorMovePayload extends CursorPosition {
+  userId: string;
+}
+
+/** Payload `cursor_leave`: только userId — координата тут не при чём, событие о видимости курсора. */
+export interface CursorLeavePayload {
+  userId: string;
+}
+
+/**
+ * Достаёт координаты курсора из недоверенного payload `cursor_move`. `null` ⇒ форма неверна (не
+ * объект, x/y не числа или не конечны — NaN/Infinity) — вызывающий (CursorService) тихо дропает
+ * событие, не ретранслируя его дальше. Курсор — высокочастотный поток, а не разовый ввод: одна
+ * сломанная координата от кривого клиента не должна ломать отрисовку у всех остальных участников.
+ */
+export function extractCursorPosition(payload: unknown): CursorPosition | null {
+  if (typeof payload !== 'object' || payload === null) {
+    return null;
+  }
+
+  const { x, y } = payload as { x?: unknown; y?: unknown };
+
+  if (
+    typeof x !== 'number' ||
+    typeof y !== 'number' ||
+    !Number.isFinite(x) ||
+    !Number.isFinite(y)
+  ) {
+    return null;
+  }
+
+  return { x, y };
+}
+
+/**
+ * События клиент→сервер (SLT-33/35/36):
  *   - `join_board` несёт ack — вход авторизуется (см. BoardRoomService), и исход обязан вернуться;
  *   - `leave_board` без ack — выход из комнаты не может быть отклонён (проверять нечего) и
  *     идемпотентен, подтверждать нечего;
  *   - `presence_ping` — прикладной heartbeat presence (см. PresenceService), без payload: клиент
  *     сигналит «я жив» на все доски, в комнатах которых сейчас состоит его сокет, разом. Ожидаемый
  *     интервал на клиенте — 20с (SLT-37); порог офлайна на сервере — 60с (3 пропуска).
+ *   - `cursor_move` — позиция курсора (см. CursorService), без ack: это высокочастотный поток, а не
+ *     дискретная операция с исходом. Клиент throttle-ит отправку до ~20-30/сек (SLT-37); сервер не
+ *     доверяет этому и держит свой потолок сверху (см. CursorService).
+ *   - `cursor_leave` — мышь ушла за пределы холста, без payload: юзер остаётся онлайн (presence не
+ *     трогается), просто курсор больше не над доской и должен исчезнуть у остальных.
  */
 export interface ClientToServerEvents {
   join_board: (payload: BoardMembershipPayload, ack: (result: BoardJoinResult) => void) => void;
   leave_board: (payload: BoardMembershipPayload) => void;
   presence_ping: () => void;
+  cursor_move: (payload: CursorPosition) => void;
+  cursor_leave: () => void;
 }
 
 /**
- * События сервер→клиент (SLT-35). Все три — presence:
+ * События сервер→клиент (SLT-35/36):
  *   - `presence_snapshot` — единичный снимок текущего онлайна доски, входящему сокету при join;
  *   - `presence_join`/`presence_leave` — дельты по userId (не по сокету), когда юзер целиком
- *     переходит между офлайном и онлайном (см. PresenceService про 0→1/1→0 на уровне userId).
+ *     переходит между офлайном и онлайном (см. PresenceService про 0→1/1→0 на уровне userId);
+ *   - `cursor_move`/`cursor_leave` — relay координат курсора (см. CursorService), НЕ presence:
+ *     юзер остаётся онлайн всё это время, дельты тут про видимость курсора на слое, а не про членство.
  */
 export interface ServerToClientEvents {
   presence_snapshot: (payload: PresenceSnapshotPayload) => void;
   presence_join: (payload: PresenceDeltaPayload) => void;
   presence_leave: (payload: PresenceDeltaPayload) => void;
+  cursor_move: (payload: CursorMovePayload) => void;
+  cursor_leave: (payload: CursorLeavePayload) => void;
 }
 
 /**
@@ -139,10 +195,17 @@ export interface ServerToClientEvents {
  * чтения сессии. Серверный presence-тик сверяет его с актуальным поколением в Redis и рвёт сокет
  * при расхождении (logout-everywhere должен реально закрывать соединение, а не только сбрасывать
  * пользователя из presence по TTL). Обязательное по той же причине, что и userId.
+ *
+ * `lastCursorMoveAt` (SLT-36) — timestamp последнего ПРИНЯТОГО `cursor_move` этого сокета, для
+ * серверного throttle-дропа в `CursorService`. В отличие от `userId`/`sessionGen` необязательное и
+ * НЕ заполняется ws-auth-middleware: до первого `cursor_move` его просто нет. Живёт в `SocketData`,
+ * а не в отдельной `Map<socketId, number>` в сервисе — так состояние уходит вместе с сокетом само
+ * (GC), без риска утечки на disconnect, которую пришлось бы чистить руками при внешнем Map.
  */
 export interface SocketData {
   userId: string;
   sessionGen: number;
+  lastCursorMoveAt?: number;
 }
 
 /** Типизированный socket.io-сервер приложения. Дженерики фиксируют контракт событий и данных. */
