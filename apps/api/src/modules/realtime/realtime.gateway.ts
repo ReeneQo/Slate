@@ -10,6 +10,7 @@ import {
 } from '@nestjs/websockets';
 
 import { BoardRoomService } from './board-room.service';
+import { CursorService } from './cursor.service';
 import { PresenceService } from './presence.service';
 import type { AppServer, AppSocket, BoardJoinResult } from './realtime.types';
 
@@ -27,6 +28,10 @@ import type { AppServer, AppSocket, BoardJoinResult } from './realtime.types';
  * бизнес-логика в контроллере, а последовательная делегация: gateway не решает НИЧЕГО про доступ или
  * онлайн, он лишь знает порядок вызова (presence — только если членство подтверждено) и передаёт тот
  * же payload обеим службам. `presence_ping` — чистая делегация без условий.
+ *
+ * `cursor_move`/`cursor_leave` (SLT-36) — та же чистая делегация в `CursorService`, отдельный от
+ * presence канал: курсор не меняет членство и не пишется в Redis, только ретранслируется живущим в
+ * комнате сокетам.
  *
  * Уборка presence при отключении сокета (SLT-35, graceful И оборванное) висит не на `disconnect`
  * (`OnGatewayDisconnect`), а на socket.io-событии `disconnecting`, поставленном в `handleConnection`:
@@ -55,6 +60,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   constructor(
     private readonly boardRoomService: BoardRoomService,
     private readonly presenceService: PresenceService,
+    private readonly cursorService: CursorService,
   ) {}
 
   handleConnection(client: AppSocket): void {
@@ -108,5 +114,20 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   @SubscribeMessage('presence_ping')
   handlePresencePing(@ConnectedSocket() client: AppSocket): Promise<void> {
     return this.presenceService.heartbeat(client);
+  }
+
+  /**
+   * Позиция курсора (SLT-36). Без ack — высокочастотный поток, не дискретная операция с исходом.
+   * Throttle и валидация формы — целиком в `CursorService` (см. класс-докстринг там).
+   */
+  @SubscribeMessage('cursor_move')
+  handleCursorMove(@ConnectedSocket() client: AppSocket, @MessageBody() payload: unknown): void {
+    this.cursorService.handleCursorMove(client, payload);
+  }
+
+  /** Мышь ушла за пределы холста (SLT-36). Presence не трогается — юзер остаётся онлайн. */
+  @SubscribeMessage('cursor_leave')
+  handleCursorLeave(@ConnectedSocket() client: AppSocket): void {
+    this.cursorService.handleCursorLeave(client);
   }
 }

@@ -2,12 +2,14 @@ import { Module } from '@nestjs/common';
 
 import { BoardModule } from '../board/board.module';
 import { BoardRoomService } from './board-room.service';
+import { CursorService } from './cursor.service';
 import { PresenceService } from './presence.service';
 import { PresenceSweeperService } from './presence-sweeper.service';
 import { RealtimeGateway } from './realtime.gateway';
 
 /**
- * Realtime-модуль: держит WebSocket-gateway, комнаты по доске (SLT-33) и presence (SLT-35).
+ * Realtime-модуль: держит WebSocket-gateway, комнаты по доске (SLT-33), presence (SLT-35) и
+ * курсоры (SLT-36).
  *
  * Все провайдеры — обычные для Nest: DI инстанцирует их при инициализации, а socket.io привязывает
  * gateway к io-серверу, который поднимает кастомный адаптер (см. session-io.adapter). Границы
@@ -28,6 +30,12 @@ import { RealtimeGateway } from './realtime.gateway';
  */
 @Module({
   imports: [BoardModule],
-  providers: [RealtimeGateway, BoardRoomService, PresenceService, PresenceSweeperService],
+  providers: [
+    RealtimeGateway,
+    BoardRoomService,
+    PresenceService,
+    PresenceSweeperService,
+    CursorService,
+  ],
 })
 export class RealtimeModule {}
