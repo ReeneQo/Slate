@@ -35,13 +35,17 @@ export const ELEMENT_ORDER_BY: Prisma.ElementOrderByWithRelationInput[] = [
 ];
 
 /**
- * Поля элемента, уходящие наружу. Как и у доски, ограничение живёт в SELECT, а не в типе:
- * `version` и `deletedAt` физически не попадают в рантайм-объект.
+ * Поля элемента, уходящие наружу. Как и у доски, ограничение живёт в SELECT, а не в типе.
  *
- * `version` — счётчик ревизий под этап 3, клиенту пока нечего с ним делать. `deletedAt`
- * наружу не нужен вовсе: выборка и так возвращает только живые элементы, так что поле было
- * бы константным `null` в каждом ответе — байты, которые ничего не сообщают, зато приглашают
- * клиента написать собственную проверку удалённости вместо серверной.
+ * `deletedAt` наружу не нужен вовсе: выборка и так возвращает только живые элементы, так что
+ * поле было бы константным `null` в каждом ответе — байты, которые ничего не сообщают, зато
+ * приглашают клиента написать собственную проверку удалённости вместо серверной.
+ *
+ * `version` — В ВЫБОРКЕ ЕСТЬ (нужен оптимистической блокировке этапа 3, SLT-38: WS-мутации
+ * шлют ожидаемую version, сервер сверяет её атомарно), но в HTTP-DTO по-прежнему НЕ уходит —
+ * `toElementDto` (element.dto.ts) перечисляет поля поимённо и `version` туда не включает.
+ * Наружу в WS-контракт его отдаёт отдельный маппер `toElementSyncDto` (realtime-модуль,
+ * ElementSyncDto): version — часть REALTIME-контракта конкретно, а не общего элемента.
  */
 export const ELEMENT_SELECT = {
   id: true,
@@ -57,9 +61,10 @@ export const ELEMENT_SELECT = {
   seed: true,
   order: true,
   data: true,
+  version: true,
   createdAt: true,
   updatedAt: true,
 } as const satisfies Prisma.ElementSelect;
 
-/** Элемент холста в том виде, в каком его видит сервис: без version и deletedAt. */
+/** Элемент холста в том виде, в каком его видит сервис: без deletedAt, но с version (SLT-38). */
 export type ElementEntity = Prisma.ElementGetPayload<{ select: typeof ELEMENT_SELECT }>;
