@@ -11,8 +11,16 @@ import {
 
 import { BoardRoomService } from './board-room.service';
 import { CursorService } from './cursor.service';
+import { ElementSyncService } from './element-sync.service';
 import { PresenceService } from './presence.service';
-import type { AppServer, AppSocket, BoardJoinResult } from './realtime.types';
+import type {
+  AppServer,
+  AppSocket,
+  BoardJoinResult,
+  ElementCreateAckResult,
+  ElementDeleteAckResult,
+  ElementUpdateAckResult,
+} from './realtime.types';
 
 /**
  * WebSocket-gateway приложения — точка входа realtime-транспорта (SLT-32, фундамент этапа 3).
@@ -61,6 +69,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     private readonly boardRoomService: BoardRoomService,
     private readonly presenceService: PresenceService,
     private readonly cursorService: CursorService,
+    private readonly elementSyncService: ElementSyncService,
   ) {}
 
   handleConnection(client: AppSocket): void {
@@ -129,5 +138,35 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   @SubscribeMessage('cursor_leave')
   handleCursorLeave(@ConnectedSocket() client: AppSocket): void {
     this.cursorService.handleCursorLeave(client);
+  }
+
+  /**
+   * Мутации элементов (SLT-38, 3.3) — три чистых делегации в ElementSyncService, той же формы,
+   * что join_board: ack обязателен, исход (применено/отказ с причиной) едет клиенту через него,
+   * а не отдельным событием. Gateway не решает НИЧЕГО про доступ, персист или broadcast — только
+   * знает, какое событие к какому методу относится.
+   */
+  @SubscribeMessage('element_create')
+  handleElementCreate(
+    @ConnectedSocket() client: AppSocket,
+    @MessageBody() payload: unknown,
+  ): Promise<ElementCreateAckResult> {
+    return this.elementSyncService.handleCreate(client, payload);
+  }
+
+  @SubscribeMessage('element_update')
+  handleElementUpdate(
+    @ConnectedSocket() client: AppSocket,
+    @MessageBody() payload: unknown,
+  ): Promise<ElementUpdateAckResult> {
+    return this.elementSyncService.handleUpdate(client, payload);
+  }
+
+  @SubscribeMessage('element_delete')
+  handleElementDelete(
+    @ConnectedSocket() client: AppSocket,
+    @MessageBody() payload: unknown,
+  ): Promise<ElementDeleteAckResult> {
+    return this.elementSyncService.handleDelete(client, payload);
   }
 }

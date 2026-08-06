@@ -1,9 +1,11 @@
 import { Module } from '@nestjs/common';
 
 import { BoardModule } from '../board/board.module';
+import { ElementModule } from '../element/element.module';
 import { UserModule } from '../user/user.module';
 import { BoardRoomService } from './board-room.service';
 import { CursorService } from './cursor.service';
+import { ElementSyncService } from './element-sync.service';
 import { PresenceService } from './presence.service';
 import { PresenceSweeperService } from './presence-sweeper.service';
 import { RealtimeGateway } from './realtime.gateway';
@@ -32,15 +34,21 @@ import { RealtimeGateway } from './realtime.gateway';
  * UserModule импортируется ради UserService (SLT-37): PresenceService резолвит displayName для
  * presence_join/presence_snapshot через него же — единственный публичный вход UserModule,
  * UserRepository наружу не выходит (см. UserModule).
+ *
+ * ElementModule импортируется ради ElementService (SLT-38): ElementSyncService зовёт
+ * `upsertEntity`/`patchVersioned`/`removeVersioned`, чтобы персистить WS-мутации ТЕМ ЖЕ путём,
+ * что и HTTP PUT/PATCH/DELETE (SLT-20) — единая точка правды, предсказанная ещё в комментарии
+ * ElementModule. ElementRepository, как и раньше, наружу не выходит.
  */
 @Module({
-  imports: [BoardModule, UserModule],
+  imports: [BoardModule, ElementModule, UserModule],
   providers: [
     RealtimeGateway,
     BoardRoomService,
     PresenceService,
     PresenceSweeperService,
     CursorService,
+    ElementSyncService,
   ],
 })
 export class RealtimeModule {}
