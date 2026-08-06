@@ -54,6 +54,11 @@ export class UserService {
     return this.userRepository.findByEmail(email);
   }
 
+  /** Batch-резолв по id (см. UserRepository.findManyByIds) — для presence-снимка (SLT-37). */
+  findManyByIds(ids: string[]): Promise<SafeUser[]> {
+    return this.userRepository.findManyByIds(ids);
+  }
+
   /** Только для проверки пароля при логине (SLT-16). Всем остальным — findByEmail. */
   findByEmailWithHash(email: string): Promise<UserWithHash | null> {
     return this.userRepository.findByEmailWithHash(email);

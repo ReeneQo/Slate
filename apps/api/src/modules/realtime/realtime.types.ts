@@ -89,12 +89,30 @@ export type BoardJoinDeniedReason = 'board_not_found';
  */
 export type BoardJoinResult = { ok: true } | { ok: false; reason: BoardJoinDeniedReason };
 
-/** Снимок онлайна доски, едущий входящему сокету единожды — сразу после успешного `join_board`. */
-export interface PresenceSnapshotPayload {
-  userIds: string[];
+/**
+ * Участник presence с именем (SLT-37: клиенту нужен displayName для аватаров/подписи курсора, а
+ * резолвить его N отдельными запросами с фронта — лишний round-trip на снимок, который может
+ * перечислять много юзеров разом). Сервер резолвит имя централизованно (см. PresenceService) —
+ * дешевле один раз в одном месте, чем на каждом клиенте по отдельности.
+ */
+export interface PresenceUser {
+  userId: string;
+  displayName: string;
 }
 
-/** Дельта presence: конкретный userId стал онлайн (`presence_join`) или офлайн (`presence_leave`). */
+/** Снимок онлайна доски, едущий входящему сокету единожды — сразу после успешного `join_board`. */
+export interface PresenceSnapshotPayload {
+  users: PresenceUser[];
+}
+
+/** Payload `presence_join`: юзер стал онлайн — несёт имя, т.к. остальные ещё не знают, кто это. */
+export type PresenceJoinPayload = PresenceUser;
+
+/**
+ * Payload `presence_leave`: только userId. Имя тут не нужно — клиент убирает существующую запись
+ * онлайн-списка/курсор по userId, а не создаёт новую; резолвить его ради события, которое всё
+ * равно всё удаляет, было бы лишней Redis/Prisma работой без потребителя результата.
+ */
 export interface PresenceDeltaPayload {
   userId: string;
 }
@@ -168,15 +186,18 @@ export interface ClientToServerEvents {
 
 /**
  * События сервер→клиент (SLT-35/36):
- *   - `presence_snapshot` — единичный снимок текущего онлайна доски, входящему сокету при join;
+ *   - `presence_snapshot` — единичный снимок текущего онлайна доски (с displayName), входящему
+ *     сокету при join;
  *   - `presence_join`/`presence_leave` — дельты по userId (не по сокету), когда юзер целиком
  *     переходит между офлайном и онлайном (см. PresenceService про 0→1/1→0 на уровне userId);
+ *     `presence_join` несёт displayName (новый участник, остальные его ещё не знают),
+ *     `presence_leave` — только userId (клиент убирает по нему, имя не нужно);
  *   - `cursor_move`/`cursor_leave` — relay координат курсора (см. CursorService), НЕ presence:
  *     юзер остаётся онлайн всё это время, дельты тут про видимость курсора на слое, а не про членство.
  */
 export interface ServerToClientEvents {
   presence_snapshot: (payload: PresenceSnapshotPayload) => void;
-  presence_join: (payload: PresenceDeltaPayload) => void;
+  presence_join: (payload: PresenceJoinPayload) => void;
   presence_leave: (payload: PresenceDeltaPayload) => void;
   cursor_move: (payload: CursorMovePayload) => void;
   cursor_leave: (payload: CursorLeavePayload) => void;

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { BoardModule } from '../board/board.module';
+import { UserModule } from '../user/user.module';
 import { BoardRoomService } from './board-room.service';
 import { CursorService } from './cursor.service';
 import { PresenceService } from './presence.service';
@@ -27,9 +28,13 @@ import { RealtimeGateway } from './realtime.gateway';
  * `canAccess`, чтобы авторизовать вход в комнату тем же инвариантом, что и HTTP. Зависимость
  * направлена только сюда — board-модуль про realtime в DI не знает, — как и у element-модуля,
  * иначе получился бы цикл.
+ *
+ * UserModule импортируется ради UserService (SLT-37): PresenceService резолвит displayName для
+ * presence_join/presence_snapshot через него же — единственный публичный вход UserModule,
+ * UserRepository наружу не выходит (см. UserModule).
  */
 @Module({
-  imports: [BoardModule],
+  imports: [BoardModule, UserModule],
   providers: [
     RealtimeGateway,
     BoardRoomService,
