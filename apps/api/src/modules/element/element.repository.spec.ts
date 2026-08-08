@@ -14,9 +14,13 @@ const ELEMENT_ID = '019fa5b1-0000-7000-8000-000000000002';
  * Как и в board.repository.spec, форма не берётся вызовом `accessibleElementScope`: тест,
  * повторяющий реализацию, остался бы зелёным при любой её правке — включая ту, что открывает
  * доступ к чужим доскам. Здесь важно зафиксировать именно вложенный фильтр по связи `board`:
- * это и есть переиспользование проверки доступа из SLT-19, и оно не должно исчезнуть незаметно.
+ * это и есть переиспользование проверки доступа из SLT-19 (расширено SLT-41 до owner ∪
+ * участник любой роли), и оно не должно исчезнуть незаметно.
  */
-const ACCESS_SCOPED_WHERE = { id: ELEMENT_ID, board: { OR: [{ ownerId: USER_ID }] } };
+const ACCESS_SCOPED_WHERE = {
+  id: ELEMENT_ID,
+  board: { OR: [{ ownerId: USER_ID }, { members: { some: { userId: USER_ID } } }] },
+};
 
 /** То же самое плюс «только живой». Разница между этими двумя — весь soft delete модуля. */
 const LIVE_ACCESS_SCOPED_WHERE = { ...ACCESS_SCOPED_WHERE, deletedAt: null };
@@ -116,6 +120,56 @@ describe('ElementRepository', () => {
         where: LIVE_ACCESS_SCOPED_WHERE,
         select: ELEMENT_SELECT,
       });
+    });
+  });
+
+  describe('getAccessLevel', () => {
+    const SELECT_SHAPE = {
+      where: LIVE_ACCESS_SCOPED_WHERE,
+      select: {
+        board: {
+          select: {
+            ownerId: true,
+            members: { where: { userId: USER_ID }, select: { role: true } },
+          },
+        },
+      },
+    };
+
+    it('спрашивает уровень доступа доски ЧЕРЕЗ живой элемент, одним запросом', async () => {
+      const { elementRepository, findFirst } = createDependencies();
+      findFirst.mockResolvedValue({ board: { ownerId: USER_ID, members: [] } });
+
+      await expect(elementRepository.getAccessLevel(ELEMENT_ID, USER_ID)).resolves.toBe('owner');
+
+      // Живой фильтр в where, как у findAccessible: мягко удалённый элемент недоступен для
+      // PATCH/DELETE, для которых и заводился этот метод.
+      expect(findFirst).toHaveBeenCalledWith(SELECT_SHAPE);
+    });
+
+    it('участнику-editor отдаёт editor', async () => {
+      const { elementRepository, findFirst } = createDependencies();
+      findFirst.mockResolvedValue({
+        board: { ownerId: 'someone-else', members: [{ role: 'editor' }] },
+      });
+
+      await expect(elementRepository.getAccessLevel(ELEMENT_ID, USER_ID)).resolves.toBe('editor');
+    });
+
+    it('участнику-viewer отдаёт viewer', async () => {
+      const { elementRepository, findFirst } = createDependencies();
+      findFirst.mockResolvedValue({
+        board: { ownerId: 'someone-else', members: [{ role: 'viewer' }] },
+      });
+
+      await expect(elementRepository.getAccessLevel(ELEMENT_ID, USER_ID)).resolves.toBe('viewer');
+    });
+
+    it('на чужой, удалённый или несуществующий элемент отдаёт null', async () => {
+      const { elementRepository, findFirst } = createDependencies();
+      findFirst.mockResolvedValue(null);
+
+      await expect(elementRepository.getAccessLevel(ELEMENT_ID, USER_ID)).resolves.toBeNull();
     });
   });
 
