@@ -11,6 +11,7 @@ export type {
   ElementDeleteAckResult,
   ElementDeletedBroadcastPayload,
   ElementDeletePayload,
+  ElementMutationRejectReason,
   ElementUpdateAckResult,
   ElementUpdatePayload,
   PresenceUser,

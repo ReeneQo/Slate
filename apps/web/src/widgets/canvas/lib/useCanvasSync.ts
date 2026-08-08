@@ -16,6 +16,7 @@ import {
   type ElementDeleteAckResult,
   type ElementDeletedBroadcastPayload,
   type ElementDeletePayload,
+  type ElementMutationRejectReason,
   type ElementUpdateAckResult,
   type ElementUpdatePayload,
   useRealtimeStore,
@@ -23,45 +24,58 @@ import {
 import { isApiError } from '@/shared/api';
 
 /**
- * Оркестратор синхронизации холста с бэком (SLT-27, транспорт мутаций — WS с SLT-39). Живёт в
- * widgets/canvas, потому что знает boardId из роута и координирует ТРИ процесса уровня виджета:
+ * Оркестратор синхронизации холста с бэком (SLT-27, транспорт мутаций — WS с SLT-39, разрешение
+ * конфликтов — SLT-40). Живёт в widgets/canvas, потому что знает boardId из роута и координирует
+ * ЧЕТЫРЕ процесса уровня виджета:
  *
  *  1. Гидрация — при открытии доски GET /boards/:id/elements → в document-store (без autosave-
  *     петли: hydrate НЕ уведомляет слушателя). reset при открытии И при размонтировании, чтобы не
- *     утащить элементы доски A в доску B. Остаётся HTTP — гидрация не мутация (SLT-39 Р2).
+ *     утащить элементы доски A в доску B. Остаётся HTTP — гидрация не мутация (SLT-39 Р2). Ответ
+ *     несёт version (SLT-40 Р2) — фронт больше не дефолтит её в 0.
  *  2. Autosave (свои мутации) — подписка на семантические изменения document-store. Метод из
  *     намерения экшена: create/update/delete → element_create/update/delete по WS с ack, а не
- *     HTTP PUT/PATCH/DELETE (SLT-39 Р1: замена транспорта, не механики — debounce/баннер из
- *     SLT-27 не меняются).
- *  3. Remote-sync (чужие мутации, НОВОЕ в SLT-39) — подписка на element_created/updated/deleted
- *     от других участников комнаты → remote-actions document-store (applyRemoteCreate/Update/
- *     Delete). Эти actions НЕ уведомляют autosave-слушателя — физически другие функции, не флаг,
- *     поэтому чужое применённое не может случайно уйти обратно на сервер (SLT-39 Р4).
+ *     HTTP PUT/PATCH/DELETE (SLT-39 Р1). Отказ (SLT-40): version_conflict — last-write-wins,
+ *     актуальный элемент из ack применяется в стор remote-путём, своя правка отбрасывается;
+ *     прочие причины — персистентный баннер, стор не трогаем.
+ *  3. Remote-sync (чужие мутации) — подписка на element_created/updated/deleted от других
+ *     участников комнаты → remote-actions document-store. Эти actions НЕ уведомляют autosave-
+ *     слушателя — физически другие функции, не флаг (SLT-39 Р4).
+ *  4. Resync после reconnect (SLT-40 Р3) — на реконнект сокета (после реального обрыва, SLT-37
+ *     уже делает re-join комнаты) повторная гидрация: полный refetch, БЕЗУСЛОВНАЯ замена стора
+ *     серверным состоянием. Пока был оффлайн, клиент мог пропустить чужие broadcast-мутации —
+ *     сервер здесь истина, локальные несохранённые правки НЕ спасаются (см. refetchDocument).
  *
  * Поток ДВУСТОРОННИЙ (с SLT-39): store → сервер (свои мутации + гидрация) И сервер → store
- * (чужие мутации). Анти-эхо не завязано на userId (ловушка двух вкладок одного юзера, Р3) —
- * целиком на socket.to на сервере (отправитель не получает свой же broadcast) и на remote-
- * actions на клиенте (применённое чужое не переотправляется).
+ * (чужие мутации, resync). Анти-эхо не завязано на userId — целиком на socket.to на сервере и на
+ * remote-actions на клиенте.
  */
 
 /** Статус первичной загрузки доски. */
 export type HydrationStatus = 'loading' | 'ready' | 'error';
 
+/**
+ * Причина активного баннера сохранения (SLT-40): сеть/сервер против version-конфликта — разное
+ * действие пользователя, разный текст (см. SyncErrorBanner). `null` — баннер скрыт.
+ */
+export type SaveErrorKind = 'network' | 'conflict';
+
 export interface CanvasSyncState {
   hydration: HydrationStatus;
   /**
-   * Активна проблема сохранения (своя мутация не долетела или была отклонена сервером). Персис-
-   * тентна: висит, пока очередное сохранение снова не пройдёт. Данные при этом НЕ теряются —
-   * стор не откатывается (в т.ч. на version_conflict — полноценный refetch-and-reapply — SLT-40).
+   * Активна проблема сохранения (своя мутация не долетела/была отклонена). Персистентна: висит,
+   * пока очередное сохранение снова не пройдёт (или пока reconnect-resync её не снимет вместе с
+   * заменой стора серверным состоянием). Данные при этом НЕ теряются молча — на version_conflict
+   * стор синхронизирован с сервером (last-write-wins, SLT-40), своя отклонённая правка потеряна,
+   * но заметно и с явным сообщением, не тихо.
    */
-  hasSaveError: boolean;
+  saveError: SaveErrorKind | null;
   /** Повторить гидрацию после ошибки загрузки (кнопка «Повторить»). */
   retryHydration: () => void;
 }
 
 export function useCanvasSync(boardId: string): CanvasSyncState {
   const [hydration, setHydration] = useState<HydrationStatus>('loading');
-  const [hasSaveError, setHasSaveError] = useState(false);
+  const [saveError, setSaveError] = useState<SaveErrorKind | null>(null);
   // Смена значения перезапускает эффект гидрации — так работает «Повторить».
   const [reloadToken, setReloadToken] = useState(0);
 
@@ -70,17 +84,15 @@ export function useCanvasSync(boardId: string): CanvasSyncState {
   // --- Гидрация + reset жизненного цикла доски -------------------------------------------------
   useEffect(() => {
     const controller = new AbortController();
-    const { reset, hydrate } = useDocumentStore.getState();
 
     // Открываем доску с чистого листа — прежняя доска не должна протечь.
-    reset();
+    useDocumentStore.getState().reset();
     setHydration('loading');
-    setHasSaveError(false);
+    setSaveError(null);
 
-    getBoardElements(boardId, controller.signal)
-      .then((elements) => {
+    refetchDocument(boardId, controller.signal)
+      .then(() => {
         if (controller.signal.aborted) return;
-        hydrate(elements);
         setHydration('ready');
       })
       .catch((error: unknown) => {
@@ -98,11 +110,11 @@ export function useCanvasSync(boardId: string): CanvasSyncState {
     };
   }, [boardId, reloadToken]);
 
-  // --- Свои мутации: подписка на семантические изменения → WS-emit с ack (SLT-39) --------------
+  // --- Свои мутации: подписка на семантические изменения → WS-emit с ack (SLT-39/40) -----------
   useEffect(() => {
     const handleChange = (change: DocumentChange): void => {
       const socket = useRealtimeStore.getState().socket;
-      void sendMutation(socket, change, boardId, setHasSaveError);
+      void sendMutation(socket, change, boardId, setSaveError);
     };
 
     setDocumentChangeListener(handleChange);
@@ -138,7 +150,59 @@ export function useCanvasSync(boardId: string): CanvasSyncState {
     };
   }, [boardId]);
 
-  return { hydration, hasSaveError, retryHydration };
+  // --- Resync после reconnect (SLT-40 Р3): полный refetch = replace, безусловно -----------------
+  useEffect(() => {
+    const socket = useRealtimeStore.getState().socket;
+    if (!socket) return;
+
+    const controller = new AbortController();
+
+    // Manager-уровневое 'reconnect' (не 'connect' — тот стреляет и на первом подключении, см.
+    // тот же приём в realtime.store.ts про re-join комнаты). Пока сокет был разорван, клиент мог
+    // пропустить чужие broadcast-мутации — сервер здесь истина, локальный документ ЗАМЕНЯЕТСЯ
+    // целиком, а не мержится (см. докстринг refetchDocument). Успешный resync снимает и баннер
+    // сохранения — правка, из-за которой он загорелся, либо уже неактуальна (её перезаписал
+    // сервер), либо (network-баннер) сеть уже восстановлена самим фактом reconnect.
+    const handleReconnect = (): void => {
+      refetchDocument(boardId, controller.signal)
+        .then(() => {
+          if (controller.signal.aborted) return;
+          setSaveError(null);
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) return;
+          if (isApiError(error) && error.status === 401) return;
+          // Best-effort: отдельного UI под отказ именно resync'а нет — следующий обрыв/reconnect
+          // повторит попытку сам. Холст остаётся на последнем известном состоянии.
+        });
+    };
+
+    socket.io.on('reconnect', handleReconnect);
+    return () => {
+      controller.abort();
+      socket.io.off('reconnect', handleReconnect);
+    };
+  }, [boardId]);
+
+  return { hydration, saveError, retryHydration };
+}
+
+/**
+ * Общий resync-вход (SLT-40 Р2/Р3): GET содержимого доски → безусловная замена document-store.
+ * Один путь для СТАРТОВОЙ гидрации и для refetch-а после reconnect — оба хотят одно и то же
+ * («клиент отстал → подтянуть актуальное серверное»), поэтому решаются одним вызовом.
+ *
+ * `hydrate()` НЕ уведомляет autosave-слушателя (см. document.store) — ни начальная гидрация, ни
+ * reconnect-refetch не должны отправить только что полученные от сервера элементы обратно на
+ * сервер как «новую» правку.
+ *
+ * Не ловит ошибки сама — вызывающий решает, что с ними делать (стартовая гидрация показывает
+ * полноэкранную ошибку, reconnect-refetch — best-effort, молча пробует снова на следующий обрыв).
+ */
+async function refetchDocument(boardId: string, signal?: AbortSignal): Promise<void> {
+  const elements = await getBoardElements(boardId, signal);
+  if (signal?.aborted) return;
+  useDocumentStore.getState().hydrate(elements);
 }
 
 // --- WS-emit с ack: по одной функции на событие (см. joinBoard в realtime.store.ts — тот же
@@ -166,50 +230,72 @@ function emitElementDelete(
 }
 
 /**
- * Отправляет одно семантическое изменение документа по WS и ведёт флаг ошибки сохранения
- * (замена HTTP-транспорта из SLT-27 на WS, SLT-39 Р1 — сама механика debounce/баннера не
- * меняется, дискретность действий та же: commit по mouseup, update по dragEnd, delete по клавише).
+ * Reject одной мутации → баннер какой природы (SLT-40 Р1/Р5). `version_conflict` — сервер уже
+ * опередил, это НЕ сетевой сбой, действие пользователя иное (перечитать актуальное, а не
+ * повторить попытку), поэтому отдельная причина. Остальные (`access_denied`/`not_found`/
+ * `conflict`/`invalid_payload`) — баги/граничные случаи, не штатный конфликт редактирования;
+ * размножать UI под каждый смысла нет, они делят баннер с сетевым сбоем (Р5, «минимально»).
+ */
+function classifyRejectReason(reason: ElementMutationRejectReason): SaveErrorKind {
+  return reason === 'version_conflict' ? 'conflict' : 'network';
+}
+
+/**
+ * Отправляет одно семантическое изменение документа по WS и ведёт причину ошибки сохранения
+ * (замена HTTP-транспорта из SLT-27 на WS, SLT-39 Р1; разрешение конфликтов — SLT-40).
  *
- * `socket` — явный параметр, а не читается из стора внутри: тестируемость (см.
- * useCanvasSync.test.ts — фейковый socket с моком emit, без реального подключения) и явность
- * контракта, тот же приём, что и у прежнего save().
+ * `socket` — явный параметр, а не читается из стора внутри: тестируемость и явность контракта,
+ * тот же приём, что и у прежнего save().
  *
  * Успех (ok:true) — тихо синхронизирует version элемента из ack через syncElementVersion. Это
  * ПОДТВЕРЖДЕНИЕ уже отправленного, а не новое изменение: не идёт через emitChange, иначе
- * подтверждение своей же правки само стало бы поводом для следующего autosave-запроса (Р4/Р5).
+ * подтверждение своей же правки само стало бы поводом для следующего autosave-запроса.
  *
- * Отказ (ok:false, включая version_conflict) — тот же персистентный баннер, что при сбое
- * autosave в SLT-27. Локальный стор НЕ трогаем и НЕ реаплаим актуальный элемент, который несёт
- * version_conflict, — это был бы refetch-and-reapply, отложенный на SLT-40 (Р1): здесь только
- * не даём отказу пройти незамеченным, иначе стор и сервер тихо разъедутся.
+ * Отказ `version_conflict` (update/delete) — LAST-WRITE-WINS (SLT-40 Р1): сервер уже опередил,
+ * ack несёт актуальный элемент — применяется в стор ЧЕРЕЗ REMOTE-ПУТЬ (applyRemoteUpdate), тем
+ * же, каким приходят чужие broadcast-мутации, — НЕ уведомляет autosave-слушателя, иначе
+ * применение чужого/актуального состояния само стало бы поводом для новой отправки (та же
+ * гарантия от петли, что у remote-actions и hydrate). Своя отклонённая правка отбрасывается —
+ * никакой reapply-догонки (переналожить своё поверх свежего) не происходит: это создало бы
+ * пинг-понг переотправок при активном конфликте (см. докстринг тикета, вариант B — в реестр).
+ * Для delete: элемент, который клиент уже удалил оптимистично из стора, applyRemoteUpdate вернёт
+ * обратно (та же функция одинаково работает и когда id уже отсутствует в elements) — сервер
+ * говорит «эта фигура всё ещё жива с другой version», клиент обязан её увидеть.
+ *
+ * Прочие отказы (access_denied/not_found/conflict/invalid_payload) — тот же персистентный
+ * баннер, что при сбое autosave в SLT-27/39, стор не трогаем.
  */
 export async function sendMutation(
   socket: AppSocket | null,
   change: DocumentChange,
   boardId: string,
-  setHasSaveError: (value: boolean) => void,
+  setSaveError: (kind: SaveErrorKind | null) => void,
 ): Promise<void> {
   if (!socket) {
     // Сокета нет (не подключен/разлогинен) — сохранить нечем, тот же сигнал, что явный reject.
-    setHasSaveError(true);
+    setSaveError('network');
     return;
   }
 
-  const { syncElementVersion } = useDocumentStore.getState();
-  let ok = false;
+  const { syncElementVersion, applyRemoteUpdate } = useDocumentStore.getState();
+  let errorKind: SaveErrorKind | null = null;
 
   switch (change.type) {
     case 'create': {
-      const payload: ElementCreatePayload = buildCreatePayload(change.element, boardId);
+      const payload = buildCreatePayload(change.element, boardId);
       const result = await emitElementCreate(socket, payload);
-      ok = result.ok;
-      if (result.ok) syncElementVersion(change.element.id, result.element.version);
+      if (result.ok) {
+        syncElementVersion(change.element.id, result.element.version);
+      } else {
+        // create не знает version_conflict (см. ElementCreateAckResult) — id-коллизия/прочее.
+        errorKind = classifyRejectReason(result.reason);
+      }
       break;
     }
     case 'update': {
       // version читаем из стора СЕЙЧАС (не из change): патч её не трогает, но обновиться она
       // могла с момента экшена — либо своим предыдущим ack (syncElementVersion), либо чужим
-      // remote-update. Она же — та единственная точка, где хранится актуальное значение (Р5).
+      // remote-update. Она же — та единственная точка, где хранится актуальное значение.
       const version = useDocumentStore.getState().elements[change.id]?.version ?? 0;
       const result = await emitElementUpdate(socket, {
         boardId,
@@ -217,26 +303,37 @@ export async function sendMutation(
         version,
         changes: change.patch,
       });
-      ok = result.ok;
-      if (result.ok) syncElementVersion(change.id, result.element.version);
+      if (result.ok) {
+        syncElementVersion(change.id, result.element.version);
+      } else {
+        errorKind = classifyRejectReason(result.reason);
+        if (result.reason === 'version_conflict') applyRemoteUpdate(result.element);
+      }
       break;
     }
     case 'delete': {
       // Одиночные операции (batch — SLT-22): удаление N элементов = N параллельных
       // element_delete. version на КАЖДЫЙ уже снята в самом change (deleteElements успел убрать
-      // элемент из стора раньше, чем сюда добралась асинхронная отправка — версию оттуда после
-      // удаления читать поздно, поэтому она едет прямо в DocumentChange, см. document.store.ts).
+      // элемент из стора раньше, чем сюда добралась асинхронная отправка).
       const results = await Promise.all(
         change.deletions.map(({ id, version }) =>
           emitElementDelete(socket, { boardId, id, version }),
         ),
       );
-      ok = results.every((result) => result.ok);
+
+      for (const result of results) {
+        if (result.ok) continue;
+        const kind = classifyRejectReason(result.reason);
+        // conflict приоритетнее network в сводном баннере пачки: он несёт действие (актуальное
+        // состояние уже применено), network — просто «повтори».
+        if (kind === 'conflict' || errorKind === null) errorKind = kind;
+        if (result.reason === 'version_conflict') applyRemoteUpdate(result.element);
+      }
       break;
     }
   }
 
-  setHasSaveError(!ok);
+  setSaveError(errorKind);
 }
 
 /** Клиентский элемент → тело `element_create` (форма создания + id, см. realtime.contracts.ts). */
