@@ -12,6 +12,7 @@ const base = {
   strokeWidth: 2,
   seed: 1,
   order: 0,
+  version: 0,
 } as const;
 
 const rect: RectElement = { ...base, type: 'rect', x: 10, y: 10, data: { width: 100, height: 50 } };

@@ -23,17 +23,20 @@ export type ElementPatch = Partial<
 };
 
 /**
- * Семантическое изменение документа — то, что autosave (widgets/canvas, SLT-27) превращает в
- * HTTP-метод: create → PUT, update → PATCH, delete → DELETE. Намерение известно здесь, в экшене,
- * поэтому метод не реконструируется из diff состояния.
+ * Семантическое изменение документа — то, что autosave (widgets/canvas, SLT-27/39) превращает в
+ * WS-мутацию: create → `element_create`, update → `element_update`, delete → `element_delete`.
+ * Намерение известно здесь, в экшене, поэтому метод не реконструируется из diff состояния.
  *
- * Событие несёт ровно то, что нужно для запроса: create — весь элемент (для PUT нужно тело
- * целиком), update — id + патч, delete — список id.
+ * Событие несёт ровно то, что нужно для запроса: create — весь элемент (тело создания нужно
+ * целиком), update — id + патч (version на момент отправки orchestrator читает из стора отдельно,
+ * патч её не трогает), delete — id ВМЕСТЕ с version, снятой в момент удаления (SLT-39): элемент
+ * уже вычищен из `elements` к моменту, когда слушатель асинхронно отправит запрос, — version
+ * неоткуда прочитать позже, кроме как из самого события.
  */
 export type DocumentChange =
   | { type: 'create'; element: CanvasElement }
   | { type: 'update'; id: string; patch: ElementPatch }
-  | { type: 'delete'; ids: string[] };
+  | { type: 'delete'; deletions: { id: string; version: number }[] };
 
 type DocumentChangeListener = (change: DocumentChange) => void;
 
@@ -71,6 +74,34 @@ interface DocumentActions {
   hydrate: (elements: CanvasElement[]) => void;
   /** Сброс документа (открытие/размонтирование доски, тесты). НЕ уведомляет слушателя. */
   reset: () => void;
+
+  /**
+   * Remote-actions (SLT-39) — применяют мутацию, пришедшую WS-broadcast'ом от ДРУГОГО участника
+   * комнаты (`element_created`/`element_updated`/`element_deleted`). Отдельные функции, а не
+   * флаг `{ remote: true }` на обычных экшенах: флаг хрупок (забудешь выставить — вернётся
+   * autosave-петля), отдельная функция физически не может дёрнуть emitChange, потому что просто
+   * не зовёт его — тот же приём, что у hydrate/reset.
+   *
+   * НЕ различают своё/чужое по userId (ловушка двух вкладок одного юзера — SLT-39): вызывающий
+   * (useCanvasSync) обязан звать их ТОЛЬКО на входящий broadcast, где анти-эхо уже обеспечено
+   * сервером (`socket.to`, отправитель свой же broadcast не получает).
+   *
+   * Broadcast несёт ПОЛНЫЙ элемент (не дельту, SLT-38) — поэтому create/update здесь делают
+   * буквально одно и то же (upsert по id); названы раздельно ради симметрии с локальной парой
+   * commit/update и на случай будущего расхождения в обработке.
+   */
+  applyRemoteCreate: (element: CanvasElement) => void;
+  applyRemoteUpdate: (element: CanvasElement) => void;
+  applyRemoteDelete: (id: string) => void;
+
+  /**
+   * Тихо синхронизирует `version` элемента из ack собственной WS-мутации (create/update, SLT-39)
+   * — подтверждение уже отправленного, а не новое изменение, поэтому НЕ уведомляет слушателя
+   * (иначе подтверждение своей же правки само стало бы поводом для нового autosave-запроса).
+   * Без этого следующая правка того же элемента унесла бы устаревшую version и мгновенно
+   * получила бы `version_conflict` от сервера.
+   */
+  syncElementVersion: (id: string, version: number) => void;
 }
 
 export type DocumentStore = CanvasDocument & DocumentActions;
@@ -110,9 +141,11 @@ export const useDocumentStore = create<DocumentStore>()(
       const id = uuidv7();
       const { elements, elementIds } = get();
       const order = nextOrder(elements, elementIds);
-      // normalizeBounds сохраняет дискриминант type; добавление id+order даёт валидный член
-      // союза CanvasElement (вывод типа без приведения — как и раньше).
-      const element: CanvasElement = { ...normalizeBounds(draft), id, order };
+      // normalizeBounds сохраняет дискриминант type; добавление id+order+version даёт валидный
+      // член союза CanvasElement (вывод типа без приведения — как и раньше). version: 0 —
+      // оптимистическое совпадение с дефолтом новой строки в БД (SLT-39); ack на element_create
+      // подтвердит его через syncElementVersion, тихо, без нового autosave-запроса.
+      const element: CanvasElement = { ...normalizeBounds(draft), id, order, version: 0 };
 
       set((state) => {
         state.elements[id] = element;
@@ -137,14 +170,17 @@ export const useDocumentStore = create<DocumentStore>()(
     deleteElements: (ids) => {
       if (ids.length === 0) return; // пустой ввод — не дёргаем ни подписчиков, ни сеть
 
-      // Set для O(1) проверки принадлежности. removed — только реально существовавшие id,
-      // чтобы на сервер не улетел DELETE по несуществующему элементу.
+      // Set для O(1) проверки принадлежности. removed — только реально существовавшие id (со
+      // снятой version, SLT-39), чтобы на сервер не улетел DELETE по несуществующему элементу и
+      // чтобы version была под рукой у слушателя ПОСЛЕ удаления — сам элемент к этому моменту
+      // уже вычищен из elements, читать version оттуда будет поздно.
       const toDelete = new Set(ids);
-      const removed: string[] = [];
+      const removed: { id: string; version: number }[] = [];
 
       set((state) => {
         for (const id of state.elementIds) {
-          if (toDelete.has(id)) removed.push(id);
+          const element = state.elements[id];
+          if (toDelete.has(id) && element) removed.push({ id, version: element.version });
         }
         // Оба контейнера правим в одном set — между кадрами нет висячего id (рендер достал бы
         // undefined) и Transformer на мёртвом узле.
@@ -152,7 +188,7 @@ export const useDocumentStore = create<DocumentStore>()(
         state.elementIds = state.elementIds.filter((id) => !toDelete.has(id));
       });
 
-      if (removed.length > 0) emitChange({ type: 'delete', ids: removed });
+      if (removed.length > 0) emitChange({ type: 'delete', deletions: removed });
     },
 
     hydrate: (elements) =>
@@ -171,6 +207,35 @@ export const useDocumentStore = create<DocumentStore>()(
       set((state) => {
         state.elements = {};
         state.elementIds = [];
+      }),
+
+    // --- Remote-actions и синхронизация version (SLT-39) — см. докстринги в DocumentActions.
+    // НЕ зовут emitChange НИ В ОДНОЙ ветке: это единственная гарантия от autosave-петли, та же,
+    // что у hydrate/reset.
+
+    applyRemoteCreate: (element) =>
+      set((state) => {
+        if (!(element.id in state.elements)) state.elementIds.push(element.id);
+        state.elements[element.id] = element;
+      }),
+
+    applyRemoteUpdate: (element) =>
+      set((state) => {
+        if (!(element.id in state.elements)) state.elementIds.push(element.id);
+        state.elements[element.id] = element;
+      }),
+
+    applyRemoteDelete: (id) =>
+      set((state) => {
+        if (!(id in state.elements)) return;
+        delete state.elements[id];
+        state.elementIds = state.elementIds.filter((existingId) => existingId !== id);
+      }),
+
+    syncElementVersion: (id, version) =>
+      set((state) => {
+        const element = state.elements[id];
+        if (element) element.version = version;
       }),
   })),
 );

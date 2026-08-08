@@ -30,9 +30,22 @@ export type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T,
 type ServerOnlyFields = 'boardId' | 'createdAt' | 'updatedAt';
 
 /**
- * Элемент холста на клиенте — серверная фигура без серверного контекста. Геометрия лежит в
- * `data` (`{ width, height }` для rect/ellipse, `{ points }` для line) — ровно как на бэке,
- * поэтому маппинг «клиент → тело PUT» это по сути добавление boardId, без переукладки полей.
+ * Добавляет `version` той же дистрибутивной техникой, что и `DistributiveOmit` выше (T — голый
+ * параметр условного типа, поэтому по union'у распределяется и эта примесь).
+ *
+ * `version` — SLT-39: клиенту нужна ожидаемая версия для WS-мутаций (оптимистическая блокировка,
+ * SLT-38), а `ElementResponse` её сознательно не несёт (HTTP-контракт прячет version, см.
+ * element.contracts.ts). Поэтому поле добавляется здесь, а не наследуется из контракта.
+ * Гидрация не знает истинного значения (см. `fromResponse` в api/mapper.ts) — там version
+ * стартует с дефолта, актуализируется первой WS-мутацией, что коснётся элемента.
+ */
+type WithVersion<T> = T extends unknown ? T & { version: number } : never;
+
+/**
+ * Элемент холста на клиенте — серверная фигура без серверного контекста, плюс `version`
+ * (SLT-39, см. WithVersion). Геометрия лежит в `data` (`{ width, height }` для rect/ellipse,
+ * `{ points }` для line) — ровно как на бэке, поэтому маппинг «клиент → тело create» это по сути
+ * добавление boardId и снятие version, без переукладки полей.
  *
  * ВНИМАНИЕ про `angle`: серверный контракт задаёт его в РАДИАНАХ (element.contracts.ts), а
  * ElementShape сейчас скармливает значение Konva как `rotation` (ГРАДУСЫ). Этап 1 не вращает —
@@ -40,7 +53,7 @@ type ServerOnlyFields = 'boardId' | 'createdAt' | 'updatedAt';
  * Когда появится вращение (Transformer, rotate), единицу надо свести на границе рендера. См.
  * развилку в описании SLT-27.
  */
-export type CanvasElement = DistributiveOmit<ElementResponse, ServerOnlyFields>;
+export type CanvasElement = WithVersion<DistributiveOmit<ElementResponse, ServerOnlyFields>>;
 
 /** Сужения союза по типу — публичная поверхность для потребителей (hit-test, тесты). */
 export type RectElement = Extract<CanvasElement, { type: 'rect' }>;
@@ -66,10 +79,11 @@ export type BaseElement = Pick<
 export type { ElementData };
 
 /**
- * Черновик — фигура, которую сейчас тащим мышью. Нет `id` (родится при коммите) и нет `order`
- * (z-index присваивается там же, при добавлении в документ). Превью рисуется из черновика.
+ * Черновик — фигура, которую сейчас тащим мышью. Нет `id` (родится при коммите), `order`
+ * (z-index присваивается там же, при добавлении в документ) и `version` (её присваивает сервер
+ * при создании, SLT-39). Превью рисуется из черновика.
  */
-export type DraftElement = DistributiveOmit<CanvasElement, 'id' | 'order'>;
+export type DraftElement = DistributiveOmit<CanvasElement, 'id' | 'order' | 'version'>;
 
 /**
  * Документ доски. `elements` — словарь (точечные апдейты дешевле массива), `elementIds` — порядок
