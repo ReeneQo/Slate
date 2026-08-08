@@ -19,7 +19,7 @@ interface BoardCanvasProps {
  * изменений нет.
  */
 export function BoardCanvas({ boardId }: BoardCanvasProps): ReactElement {
-  const { hydration, hasSaveError, retryHydration } = useCanvasSync(boardId);
+  const { hydration, saveError, retryHydration } = useCanvasSync(boardId);
   useRealtimePresence(boardId);
 
   if (hydration === 'loading') {
@@ -43,7 +43,7 @@ export function BoardCanvas({ boardId }: BoardCanvasProps): ReactElement {
 
   return (
     <>
-      {hasSaveError && <SyncErrorBanner />}
+      {saveError && <SyncErrorBanner kind={saveError} />}
       <PresenceBar />
       <CanvasStage />
     </>

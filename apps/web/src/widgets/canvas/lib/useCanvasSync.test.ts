@@ -47,21 +47,21 @@ describe('sendMutation', () => {
     setDocumentChangeListener(null);
   });
 
-  it('сокета нет — сразу баннер, ничего не отправляет', async () => {
-    const setHasSaveError = vi.fn();
+  it('сокета нет — сразу network-баннер, ничего не отправляет', async () => {
+    const setSaveError = vi.fn();
 
-    await sendMutation(null, { type: 'delete', deletions: [] }, boardId, setHasSaveError);
+    await sendMutation(null, { type: 'delete', deletions: [] }, boardId, setSaveError);
 
-    expect(setHasSaveError).toHaveBeenCalledWith(true);
+    expect(setSaveError).toHaveBeenCalledWith('network');
   });
 
   it('create: шлёт element_create с id в payload и без version, гасит баннер на успехе', async () => {
     const element = rect('el-1', 0);
     const ackResult: ElementCreateAckResult = { ok: true, element: { ...element, version: 5 } };
     const { socket, emit } = fakeSocket(ackResult);
-    const setHasSaveError = vi.fn();
+    const setSaveError = vi.fn();
 
-    await sendMutation(socket, { type: 'create', element }, boardId, setHasSaveError);
+    await sendMutation(socket, { type: 'create', element }, boardId, setSaveError);
 
     expect(emit).toHaveBeenCalledWith(
       'element_create',
@@ -70,7 +70,7 @@ describe('sendMutation', () => {
     );
     const [, payload] = emit.mock.calls[0]!;
     expect('version' in (payload as object)).toBe(false);
-    expect(setHasSaveError).toHaveBeenCalledWith(false);
+    expect(setSaveError).toHaveBeenCalledWith(null);
   });
 
   it('create: applied-ack тихо синхронизирует version в сторе (без нотификации autosave-слушателя)', async () => {
@@ -88,6 +88,17 @@ describe('sendMutation', () => {
     expect(listener).not.toHaveBeenCalled();
   });
 
+  it('create: reject "conflict" (id занят) — network-баннер, version_conflict у create невозможен', async () => {
+    const element = rect('el-1', 0);
+    const ackResult: ElementCreateAckResult = { ok: false, reason: 'conflict' };
+    const { socket } = fakeSocket(ackResult);
+    const setSaveError = vi.fn();
+
+    await sendMutation(socket, { type: 'create', element }, boardId, setSaveError);
+
+    expect(setSaveError).toHaveBeenCalledWith('network');
+  });
+
   it('update: шлёт element_update с boardId + текущей version элемента из стора + changes', async () => {
     useDocumentStore.getState().applyRemoteCreate(rect('el-1', 3));
     const ackResult: ElementUpdateAckResult = { ok: true, element: rect('el-1', 4) };
@@ -103,25 +114,60 @@ describe('sendMutation', () => {
     expect(useDocumentStore.getState().elements['el-1']?.version).toBe(4);
   });
 
-  it('update: reject (version_conflict) — баннер, стор не трогаем', async () => {
+  it('update: reject version_conflict — применяет актуальный серверный элемент (last-write-wins) и conflict-баннер', async () => {
     useDocumentStore.getState().applyRemoteCreate(rect('el-1', 3));
+    const serverElement = { ...rect('el-1', 9), x: 42 };
+    const ackResult: ElementUpdateAckResult = {
+      ok: false,
+      reason: 'version_conflict',
+      element: serverElement,
+    };
+    const { socket } = fakeSocket(ackResult);
+    const setSaveError = vi.fn();
+
+    await sendMutation(
+      socket,
+      { type: 'update', id: 'el-1', patch: { x: 999 } },
+      boardId,
+      setSaveError,
+    );
+
+    expect(setSaveError).toHaveBeenCalledWith('conflict');
+    // Своя правка (x: 999) отброшена — стор несёт серверную (last-write-wins, НЕ reapply-догонку).
+    expect(useDocumentStore.getState().elements['el-1']).toEqual(serverElement);
+  });
+
+  it('update: version_conflict применяется через remote-путь — не будит autosave-слушателя (анти-петля)', async () => {
+    useDocumentStore.getState().applyRemoteCreate(rect('el-1', 3));
+    const listener = vi.fn();
+    setDocumentChangeListener(listener);
+
     const ackResult: ElementUpdateAckResult = {
       ok: false,
       reason: 'version_conflict',
       element: rect('el-1', 9),
     };
     const { socket } = fakeSocket(ackResult);
-    const setHasSaveError = vi.fn();
+
+    await sendMutation(socket, { type: 'update', id: 'el-1', patch: { x: 999 } }, boardId, vi.fn());
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('update: reject прочей причины (not_found) — network-баннер, стор не трогаем', async () => {
+    useDocumentStore.getState().applyRemoteCreate(rect('el-1', 3));
+    const ackResult: ElementUpdateAckResult = { ok: false, reason: 'not_found' };
+    const { socket } = fakeSocket(ackResult);
+    const setSaveError = vi.fn();
 
     await sendMutation(
       socket,
       { type: 'update', id: 'el-1', patch: { x: 999 } },
       boardId,
-      setHasSaveError,
+      setSaveError,
     );
 
-    expect(setHasSaveError).toHaveBeenCalledWith(true);
-    // Локальная version НЕ подтягивается из reject — refetch-and-reapply вне границ SLT-39.
+    expect(setSaveError).toHaveBeenCalledWith('network');
     expect(useDocumentStore.getState().elements['el-1']?.version).toBe(3);
   });
 
@@ -143,6 +189,29 @@ describe('sendMutation', () => {
     );
   });
 
+  it('delete: reject version_conflict — сервер говорит «элемент всё ещё жив», клиент возвращает его в стор', async () => {
+    // Элемент уже вычищен из стора оптимистично (deleteElements — до того, как асинхронный
+    // emit долетел до ack), ровно как в реальном потоке document.store → sendMutation.
+    const serverElement = rect('el-1', 5);
+    const ackResult: ElementDeleteAckResult = {
+      ok: false,
+      reason: 'version_conflict',
+      element: serverElement,
+    };
+    const { socket } = fakeSocket(ackResult);
+    const setSaveError = vi.fn();
+
+    await sendMutation(
+      socket,
+      { type: 'delete', deletions: [{ id: 'el-1', version: 3 }] },
+      boardId,
+      setSaveError,
+    );
+
+    expect(setSaveError).toHaveBeenCalledWith('conflict');
+    expect(useDocumentStore.getState().elements['el-1']).toEqual(serverElement);
+  });
+
   it('delete: хотя бы один reject в пачке — баннер (Promise.all семантика SLT-27)', async () => {
     let call = 0;
     const emit = vi.fn(
@@ -152,7 +221,7 @@ describe('sendMutation', () => {
       },
     );
     const socket = { emit } as unknown as AppSocket;
-    const setHasSaveError = vi.fn();
+    const setSaveError = vi.fn();
 
     await sendMutation(
       socket,
@@ -164,9 +233,44 @@ describe('sendMutation', () => {
         ],
       },
       boardId,
-      setHasSaveError,
+      setSaveError,
     );
 
-    expect(setHasSaveError).toHaveBeenCalledWith(true);
+    expect(setSaveError).toHaveBeenCalledWith('network');
+  });
+
+  it('delete: пачка с конфликтом И сетевым отказом — сводный баннер приоритизирует conflict (несёт действие)', async () => {
+    // deletions[0] ('a') получает эмит первым (map сохраняет порядок вызова emit синхронно) —
+    // network-отказ; deletions[1] ('b') — version_conflict с актуальным серверным элементом 'b'.
+    let call = 0;
+    const serverElement = rect('b', 7);
+    const emit = vi.fn(
+      (_event: string, _payload: unknown, ack: (result: ElementDeleteAckResult) => void) => {
+        call += 1;
+        ack(
+          call === 1
+            ? { ok: false, reason: 'not_found' }
+            : { ok: false, reason: 'version_conflict', element: serverElement },
+        );
+      },
+    );
+    const socket = { emit } as unknown as AppSocket;
+    const setSaveError = vi.fn();
+
+    await sendMutation(
+      socket,
+      {
+        type: 'delete',
+        deletions: [
+          { id: 'a', version: 0 },
+          { id: 'b', version: 6 },
+        ],
+      },
+      boardId,
+      setSaveError,
+    );
+
+    expect(setSaveError).toHaveBeenCalledWith('conflict');
+    expect(useDocumentStore.getState().elements.b).toEqual(serverElement);
   });
 });

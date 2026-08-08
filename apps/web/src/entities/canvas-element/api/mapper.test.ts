@@ -1,4 +1,4 @@
-import type { ElementResponse } from '@slate/shared-types';
+import type { ElementListItemResponse } from '@slate/shared-types';
 import { describe, expect, it } from 'vitest';
 
 import type { CanvasElement } from '../model/types';
@@ -50,8 +50,9 @@ describe('toUpsertInput', () => {
 
 describe('fromResponse', () => {
   it('снимает серверный контекст (boardId, createdAt, updatedAt), геометрию сохраняет', () => {
-    const response: ElementResponse = {
+    const response: ElementListItemResponse = {
       ...shape,
+      version: 3,
       boardId,
       createdAt: '2026-08-04T00:00:00.000Z',
       updatedAt: '2026-08-04T00:00:00.000Z',
@@ -59,32 +60,34 @@ describe('fromResponse', () => {
 
     const mapped = fromResponse(response);
 
-    expect(mapped).toEqual({ ...shape, version: 0 });
+    expect(mapped).toEqual({ ...shape, version: 3 });
     expect('boardId' in mapped).toBe(false);
     expect('createdAt' in mapped).toBe(false);
   });
 
-  it('version в ElementResponse не приходит — гидрация проставляет безопасный дефолт 0', () => {
-    const response: ElementResponse = {
+  it('version берётся из ответа как есть (SLT-40) — не дефолтится в 0', () => {
+    const response: ElementListItemResponse = {
       ...shape,
+      version: 7,
       boardId,
       createdAt: '2026-08-04T00:00:00.000Z',
       updatedAt: '2026-08-04T00:00:00.000Z',
     };
 
-    expect(fromResponse(response).version).toBe(0);
+    expect(fromResponse(response).version).toBe(7);
   });
 
-  it('round-trip: fromResponse ∘ (ответ на toUpsertInput) восстанавливает геометрию, НЕ version', () => {
-    // Сервер эхом возвращает тело + свои поля; клиент снимает их обратно. version по HTTP не
-    // едет ни туда, ни обратно — это и есть задокументированный разрыв (см. mapper.ts).
-    const serverEcho: ElementResponse = {
+  it('round-trip: fromResponse ∘ (ответ на toUpsertInput) восстанавливает геометрию И version', () => {
+    // Сервер эхом возвращает тело + свои поля; клиент снимает их обратно. version теперь едет
+    // в GET-ответе как есть (SLT-40) — разрыв, задокументированный раньше в mapper.ts, закрыт.
+    const serverEcho: ElementListItemResponse = {
       ...toUpsertInput(element, boardId),
       id: element.id,
+      version: element.version,
       createdAt: '2026-08-04T00:00:00.000Z',
       updatedAt: '2026-08-04T00:00:00.000Z',
-    } as ElementResponse;
+    } as ElementListItemResponse;
 
-    expect(fromResponse(serverEcho)).toEqual({ ...shape, version: 0 });
+    expect(fromResponse(serverEcho)).toEqual({ ...shape, version: 3 });
   });
 });

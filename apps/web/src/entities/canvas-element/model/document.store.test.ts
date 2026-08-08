@@ -195,6 +195,20 @@ describe('useDocumentStore — autosave-события', () => {
     expect(listener).not.toHaveBeenCalled();
   });
 
+  it('повторный hydrate ЗАМЕНЯЕТ документ целиком, а не мержит (SLT-40 Р3: resync/reconnect-refetch)', () => {
+    // Локальный элемент, которого в новом серверном снимке уже нет (удалён кем-то, пока клиент
+    // был оффлайн), обязан пропасть — resync не «дозаписывает» новое поверх старого.
+    useDocumentStore.getState().hydrate([serverRect('stale', 0), serverRect('kept', 1)]);
+
+    useDocumentStore.getState().hydrate([serverRect('kept', 0, 3), serverRect('fresh', 1)]);
+
+    const { elements, elementIds } = useDocumentStore.getState();
+    expect([...elementIds].sort()).toEqual(['fresh', 'kept']);
+    expect(elements.stale).toBeUndefined();
+    // И версия/данные обновляются на актуальные серверные, не остаются от первого hydrate.
+    expect(elements.kept?.version).toBe(3);
+  });
+
   it('после hydrate новый commit получает order выше максимального серверного', () => {
     useDocumentStore.getState().hydrate([serverRect('a', 10)]);
 

@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 
-import { type ElementDto, toElementDto } from '../element/dto/element.dto';
+import { type ElementListItemDto, toElementListItemDto } from '../element/dto/element.dto';
 import { BoardRepository } from './board.repository';
 import { type BoardDto, toBoardDto } from './dto/board.dto';
 import type { CreateBoardDto } from './dto/create-board.dto';
@@ -99,14 +99,14 @@ export class BoardService {
    *
    * @throws {NotFoundException} доска не существует ИЛИ принадлежит другому пользователю
    */
-  async findElements(boardId: string, userId: string): Promise<ElementDto[]> {
+  async findElements(boardId: string, userId: string): Promise<ElementListItemDto[]> {
     const elements = await this.boardRepository.findElements(boardId, userId);
 
     if (elements === null) {
       throw boardNotFound();
     }
 
-    return elements.map((element) => toElementDto(element));
+    return elements.map((element) => toElementListItemDto(element));
   }
 
   /** @throws {NotFoundException} доска не существует ИЛИ принадлежит другому пользователю */

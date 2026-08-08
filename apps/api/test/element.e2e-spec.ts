@@ -371,20 +371,51 @@ describe('Element (e2e)', () => {
     });
   });
 
-  describe('регресс: version и deletedAt не покидают сервер', () => {
-    it('не отдаёт служебные поля ни в одном ответе про элемент', async () => {
+  describe('регресс: version и deletedAt не покидают PUT/PATCH-ответы', () => {
+    it('не отдаёт служебные поля в ответах на мутации элемента', async () => {
       const created = await anna.agent.put(elementUrl(ELEMENT_ID)).send(elementBody(board.id));
       const replaced = await anna.agent.put(elementUrl(ELEMENT_ID)).send(elementBody(board.id));
       const patched = await anna.agent.patch(elementUrl(ELEMENT_ID)).send({ x: 5 });
-      const list = await anna.agent.get(boardElementsUrl(board.id));
 
-      const raw = JSON.stringify([created.body, replaced.body, patched.body, list.body]);
+      const raw = JSON.stringify([created.body, replaced.body, patched.body]);
 
       // deletedAt наружу не нужен вовсе: выдача и так возвращает только живые элементы, так
       // что поле было бы константным null — байтами, которые ничего не сообщают, зато
-      // приглашают клиента написать собственную проверку удалённости вместо серверной.
+      // приглашают клиента написать собственную проверку удалённости вместо серверной. `version`
+      // мутации по-прежнему прячут (SLT-38/39/40): оптимистическая блокировка едет только по WS —
+      // PUT/PATCH её не проверяют и клиенту для них не нужны, версии здесь взяться неоткуда.
       expect(raw).not.toContain('version');
       expect(raw).not.toContain('deletedAt');
+    });
+
+    it('deletedAt не покидает GET-список тоже — version в нём легален (SLT-40)', async () => {
+      await anna.agent.put(elementUrl(ELEMENT_ID)).send(elementBody(board.id));
+
+      const list = await anna.agent.get(boardElementsUrl(board.id));
+
+      expect(JSON.stringify(list.body)).not.toContain('deletedAt');
+    });
+  });
+
+  describe('GET /boards/:id/elements отдаёт version (SLT-40)', () => {
+    it('версия свежесозданного элемента — 0, растёт с каждой WS/HTTP-мутацией', async () => {
+      await anna.agent.put(elementUrl(ELEMENT_ID)).send(elementBody(board.id));
+
+      const [created] = parseElementListResponse(
+        (await anna.agent.get(boardElementsUrl(board.id))).body,
+      );
+
+      expect(created?.version).toBe(0);
+
+      await anna.agent.patch(elementUrl(ELEMENT_ID)).send({ x: 99 });
+
+      const [patched] = parseElementListResponse(
+        (await anna.agent.get(boardElementsUrl(board.id))).body,
+      );
+
+      // Гидрация приносит АКТУАЛЬНУЮ version — иначе первая WS-правка старого элемента
+      // получила бы ложный version_conflict от сервера (долг SLT-39, закрытый здесь).
+      expect(patched?.version).toBe(1);
     });
   });
 

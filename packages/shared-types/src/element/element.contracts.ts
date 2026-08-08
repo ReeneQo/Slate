@@ -194,7 +194,37 @@ export type _ElementResponseCoversAllElementTypes = AssertExact<
 >;
 
 /**
+ * Элемент в ответе `GET /boards/:id/elements`: та же форма, что `elementResponseSchema`, плюс
+ * `version` (SLT-40). Единственное расширение HTTP-контракта — PUT/PATCH-ответы (замена/патч
+ * одного элемента) `version` по-прежнему не несут, это оптимистическая блокировка WS-мутаций
+ * (SLT-38), а не общее поле элемента; отдельная схема, а не version-поле на `elementResponseSchema`
+ * само по себе, чтобы PUT/PATCH не получили его молча вместе с ней.
+ *
+ * Гидрации он нужен НЕ ради вывода, а ради следующей правки: без реальной version клиент шлёт
+ * WS-мутацию с дефолтом 0 и получает ложный `version_conflict` на первой же правке элемента,
+ * который эту сессию не касалась ни одна WS-мутация (долг SLT-39, см. api/mapper.ts на фронте).
+ */
+const elementListItemBaseSchema = elementResponseBaseSchema.extend({
+  version: z.int().nonnegative(),
+});
+
+function elementListItemVariantSchema<T extends ElementType>(type: T) {
+  return elementListItemBaseSchema.extend({
+    type: z.literal(type),
+    data: ELEMENT_DATA_SCHEMAS[type],
+  });
+}
+
+export const elementListItemSchema = z.discriminatedUnion('type', [
+  elementListItemVariantSchema('rect'),
+  elementListItemVariantSchema('ellipse'),
+  elementListItemVariantSchema('line'),
+]);
+
+export type ElementListItemResponse = z.infer<typeof elementListItemSchema>;
+
+/**
  * Содержимое доски: `GET /boards/:id/elements`. Отдельная схема, а не `z.array(...)` по месту, —
  * чтобы тесты и клиент разбирали список ОДНИМ определением, включая порядок полей и строгость.
  */
-export const elementListResponseSchema = z.array(elementResponseSchema);
+export const elementListResponseSchema = z.array(elementListItemSchema);

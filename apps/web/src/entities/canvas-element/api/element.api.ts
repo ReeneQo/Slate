@@ -1,4 +1,4 @@
-import type { ElementResponse } from '@slate/shared-types';
+import type { ElementListItemResponse } from '@slate/shared-types';
 
 import { request } from '@/shared/api';
 
@@ -21,6 +21,8 @@ export async function getBoardElements(
   boardId: string,
   signal?: AbortSignal,
 ): Promise<CanvasElement[]> {
-  const elements = await request<ElementResponse[]>(ELEMENT_ENDPOINTS.ofBoard(boardId), { signal });
+  const elements = await request<ElementListItemResponse[]>(ELEMENT_ENDPOINTS.ofBoard(boardId), {
+    signal,
+  });
   return elements.map(fromResponse);
 }
