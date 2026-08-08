@@ -1,10 +1,4 @@
-export {
-  deleteElement,
-  ELEMENT_ENDPOINTS,
-  getBoardElements,
-  patchElement,
-  putElement,
-} from './api';
+export { ELEMENT_ENDPOINTS, getBoardElements, toUpsertInput } from './api';
 export {
   type DocumentChange,
   type DocumentStore,

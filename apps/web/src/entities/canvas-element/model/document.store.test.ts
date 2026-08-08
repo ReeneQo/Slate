@@ -114,8 +114,8 @@ describe('useDocumentStore', () => {
   });
 });
 
-/** Серверная фигура для гидрации — форма CanvasElement с явным order. */
-function serverRect(id: string, order: number): CanvasElement {
+/** Серверная фигура для гидрации/remote-actions — форма CanvasElement с явными order/version. */
+function serverRect(id: string, order: number, version = 0): CanvasElement {
   return {
     id,
     type: 'rect',
@@ -128,6 +128,7 @@ function serverRect(id: string, order: number): CanvasElement {
     strokeWidth: 2,
     seed: 1,
     order,
+    version,
     data: { width: 10, height: 10 },
   };
 }
@@ -161,14 +162,14 @@ describe('useDocumentStore — autosave-события', () => {
     expect(changes).toEqual([{ type: 'update', id, patch: { x: 999 } }]);
   });
 
-  it('deleteElements уведомляет событием delete только по реально существовавшим id', () => {
+  it('deleteElements уведомляет событием delete только по реально существовавшим id, с их version', () => {
     const id = commit();
     const changes: DocumentChange[] = [];
     setDocumentChangeListener((change) => changes.push(change));
 
     useDocumentStore.getState().deleteElements([id, 'never-existed']);
 
-    expect(changes).toEqual([{ type: 'delete', ids: [id] }]);
+    expect(changes).toEqual([{ type: 'delete', deletions: [{ id, version: 0 }] }]);
   });
 
   it('пустое удаление и удаление несуществующего не дёргают слушателя', () => {
@@ -209,5 +210,122 @@ describe('useDocumentStore — autosave-события', () => {
     useDocumentStore.getState().reset();
 
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe('useDocumentStore — remote-actions (SLT-39)', () => {
+  beforeEach(() => {
+    useDocumentStore.getState().reset();
+  });
+
+  afterEach(() => {
+    setDocumentChangeListener(null);
+  });
+
+  it('applyRemoteCreate добавляет чужой элемент и НЕ уведомляет слушателя (анти-петля)', () => {
+    const listener = vi.fn();
+    setDocumentChangeListener(listener);
+
+    useDocumentStore.getState().applyRemoteCreate(serverRect('remote-1', 0, 0));
+
+    const { elements, elementIds } = useDocumentStore.getState();
+    expect(elementIds).toContain('remote-1');
+    expect(elements['remote-1']?.id).toBe('remote-1');
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('applyRemoteUpdate заменяет элемент целиком (broadcast несёт полный элемент, не дельту) и не уведомляет', () => {
+    useDocumentStore.getState().hydrate([serverRect('a', 0, 0)]);
+    const listener = vi.fn();
+    setDocumentChangeListener(listener);
+
+    useDocumentStore.getState().applyRemoteUpdate({ ...serverRect('a', 0, 1), x: 999 });
+
+    const element = useDocumentStore.getState().elements.a;
+    expect(element?.x).toBe(999);
+    expect(element?.version).toBe(1);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('applyRemoteUpdate на неизвестный id вставляет его (свежий элемент, не потерянный)', () => {
+    const listener = vi.fn();
+    setDocumentChangeListener(listener);
+
+    useDocumentStore.getState().applyRemoteUpdate(serverRect('unknown', 0, 2));
+
+    expect(useDocumentStore.getState().elementIds).toContain('unknown');
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('applyRemoteDelete убирает элемент из elements и elementIds синхронно, не уведомляет', () => {
+    useDocumentStore.getState().hydrate([serverRect('a', 0)]);
+    const listener = vi.fn();
+    setDocumentChangeListener(listener);
+
+    useDocumentStore.getState().applyRemoteDelete('a');
+
+    const { elements, elementIds } = useDocumentStore.getState();
+    expect(elements.a).toBeUndefined();
+    expect(elementIds).not.toContain('a');
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('applyRemoteDelete на несуществующий id — no-op, не уведомляет', () => {
+    const listener = vi.fn();
+    setDocumentChangeListener(listener);
+
+    useDocumentStore.getState().applyRemoteDelete('ghost');
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('чужая мутация того же элемента виден в СВОЁМ следующем commit/update — не флаг, отдельный путь', () => {
+    // Регрессия ровно на решение Р4 SLT-39: remote-путь и локальный commit/update физически
+    // разные функции — применение чужого не может случайно поставить «свой» флаг и наоборот.
+    const listener = vi.fn();
+    setDocumentChangeListener(listener);
+
+    useDocumentStore.getState().applyRemoteCreate(serverRect('remote-2', 0, 0));
+    expect(listener).not.toHaveBeenCalled();
+
+    useDocumentStore.getState().updateElement('remote-2', { x: 5 });
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith({ type: 'update', id: 'remote-2', patch: { x: 5 } });
+  });
+});
+
+describe('useDocumentStore — syncElementVersion (SLT-39)', () => {
+  beforeEach(() => {
+    useDocumentStore.getState().reset();
+  });
+
+  afterEach(() => {
+    setDocumentChangeListener(null);
+  });
+
+  it('тихо обновляет version существующего элемента, не уведомляя слушателя', () => {
+    const id = commit();
+    const listener = vi.fn();
+    setDocumentChangeListener(listener);
+
+    useDocumentStore.getState().syncElementVersion(id, 7);
+
+    expect(useDocumentStore.getState().elements[id]?.version).toBe(7);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('следующая своя мутация того же элемента видит уже обновлённую version', () => {
+    const id = commit();
+    useDocumentStore.getState().syncElementVersion(id, 7);
+
+    expect(useDocumentStore.getState().elements[id]?.version).toBe(7);
+
+    // Именно это читает orchestrator (useCanvasSync) перед отправкой следующего element_update.
+    useDocumentStore.getState().updateElement(id, { x: 1 });
+    expect(useDocumentStore.getState().elements[id]?.version).toBe(7);
+  });
+
+  it('syncElementVersion на несуществующий id — no-op, без исключения', () => {
+    expect(() => useDocumentStore.getState().syncElementVersion('ghost', 1)).not.toThrow();
   });
 });

@@ -10,12 +10,14 @@ import type { CanvasElement } from '../model/types';
  */
 
 /**
- * Клиентский элемент → тело `PUT /elements/:id`. id уходит в URL (в теле его нет), boardId
- * приходит из роута (`/boards/:id`, SLT-27 Р8), остальное совпадает поле-в-поле. TypeScript
- * проверяет полноту против UpsertElementInput — забытое поле не скомпилируется.
+ * Клиентский элемент → тело создания (WS `element_create`, ранее — PUT-тело, SLT-39). id и
+ * version уходят отдельно (id — в саму полезную нагрузку событий рядом с этим телом, version
+ * контракту создания не нужна вовсе — оптимистическая блокировка есть только у update/delete).
+ * boardId приходит из роута (`/boards/:id`, SLT-27 Р8), остальное совпадает поле-в-поле.
+ * TypeScript проверяет полноту против UpsertElementInput — забытое поле не скомпилируется.
  */
 export function toUpsertInput(element: CanvasElement, boardId: string): UpsertElementInput {
-  const { id: _id, ...rest } = element;
+  const { id: _id, version: _version, ...rest } = element;
   return { ...rest, boardId };
 }
 
@@ -23,8 +25,16 @@ export function toUpsertInput(element: CanvasElement, boardId: string): UpsertEl
  * Ответ сервера → клиентский элемент (гидрация). Снимаем серверный контекст, которого модель не
  * держит: boardId (известен из роута), createdAt/updatedAt (рендеру не нужны). Остальное — та же
  * форма, что и в модели.
+ *
+ * `version` в ElementResponse нет вовсе — HTTP-контракт её сознательно прячет (SLT-38/39). `0`
+ * здесь безопасный дефолт для только что созданных элементов (совпадает с дефолтом в БД), но НЕ
+ * гарантированно верен для элемента с историей правок, которого не касалась ни одна WS-мутация
+ * в этой сессии: первая же его правка рискует получить разовый `version_conflict` (баннер, без
+ * потери данных — сервер отклонит запись, а не примет её вслепую). Полноценная синхронизация
+ * версии после гидрации — вне границ SLT-39 (см. развилку в описании тикета), закрывается либо
+ * в SLT-40, либо отдельным решением отдать version из GET-ответа.
  */
 export function fromResponse(response: ElementResponse): CanvasElement {
   const { boardId: _boardId, createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = response;
-  return rest;
+  return { ...rest, version: 0 };
 }

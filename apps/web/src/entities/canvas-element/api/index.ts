@@ -1,2 +1,3 @@
-export { deleteElement, getBoardElements, patchElement, putElement } from './element.api';
+export { getBoardElements } from './element.api';
 export { ELEMENT_ENDPOINTS } from './endpoints';
+export { toUpsertInput } from './mapper';
