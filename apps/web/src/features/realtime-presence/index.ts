@@ -3,7 +3,18 @@
  * импортируют `@/features/realtime-presence`, а не внутренние файлы — раскладка
  * (lib/model/ui) остаётся деталью реализации.
  */
-export type { PresenceUser } from './lib/realtime.contracts';
+export type {
+  AppSocket,
+  ElementBroadcastPayload,
+  ElementCreateAckResult,
+  ElementCreatePayload,
+  ElementDeleteAckResult,
+  ElementDeletedBroadcastPayload,
+  ElementDeletePayload,
+  ElementUpdateAckResult,
+  ElementUpdatePayload,
+  PresenceUser,
+} from './lib/realtime.contracts';
 export type { RemoteCursor } from './model/realtime.store';
 export { useRealtimeStore } from './model/realtime.store';
 export { useRealtimePresence } from './model/useRealtimePresence';
