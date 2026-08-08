@@ -9,7 +9,7 @@ import { type AppSocket, type BoardJoinResult, boardRoom, extractBoardId } from 
  * Логика комнат живёт ЗДЕСЬ, а не в gateway, ровно по той же причине, по какой бизнес-логика
  * живёт в сервисе, а не в контроллере: gateway — тонкий транспорт (принял событие → делегировал),
  * а «можно ли войти и что при этом сделать с сокетом» — правило, и у правила одно место. Поэтому
- * и зависимость от board-слоя (`BoardService.canAccess`) инжектится сюда, а не в gateway.
+ * и зависимость от board-слоя (`BoardService.getAccess`) инжектится сюда, а не в gateway.
  *
  * Модель членства — только комнаты socket.io плюс `userId` на сокете (из ws-auth, SLT-32). Своего
  * реестра `room → Set<userId>` здесь НЕТ: агрегация «кто онлайн на доске» — территория presence
@@ -26,9 +26,11 @@ export class BoardRoomService {
   /**
    * Ввести сокет в комнату доски, если она доступна его пользователю.
    *
-   * Доступ — тот же инвариант, что на HTTP: `BoardService.canAccess` (булево ядро поверх
-   * access-scope репозитория). Отказ выражен доменной причиной, а не HTTP-статусом — 404 в
-   * реалтайме не к месту, — и едет назад ack'ом; `board_not_found` намеренно не различает «нет
+   * Доступ — тот же инвариант, что на HTTP: `BoardService.getAccess` (единая точка SLT-41 поверх
+   * access-scope репозитория). Пускает ЛЮБОЙ уровень доступа (`!== null`) — viewer тоже читатель
+   * и вправе состоять в комнате доски, роль решает лишь, что можно делать ВНУТРИ комнаты
+   * (см. ElementSyncService/canWrite). Отказ выражен доменной причиной, а не HTTP-статусом — 404
+   * в реалтайме не к месту, — и едет назад ack'ом; `board_not_found` намеренно не различает «нет
    * доски» и «не твоя» (симметрично boardNotFound на HTTP).
    *
    * `payload` приходит с провода недоверенным, поэтому boardId извлекается и проверяется как
@@ -42,7 +44,7 @@ export class BoardRoomService {
     const boardId = extractBoardId(payload);
     const { userId } = socket.data;
 
-    if (boardId === null || !(await this.boardService.canAccess(boardId, userId))) {
+    if (boardId === null || (await this.boardService.getAccess(boardId, userId)) === null) {
       this.logger.debug(`WS join denied: user=${userId} socket=${socket.id}`);
       return { ok: false, reason: 'board_not_found' };
     }
