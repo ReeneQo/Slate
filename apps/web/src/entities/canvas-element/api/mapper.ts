@@ -1,4 +1,4 @@
-import type { ElementResponse, UpsertElementInput } from '@slate/shared-types';
+import type { ElementListItemResponse, UpsertElementInput } from '@slate/shared-types';
 
 import type { CanvasElement } from '../model/types';
 
@@ -26,15 +26,13 @@ export function toUpsertInput(element: CanvasElement, boardId: string): UpsertEl
  * держит: boardId (известен из роута), createdAt/updatedAt (рендеру не нужны). Остальное — та же
  * форма, что и в модели.
  *
- * `version` в ElementResponse нет вовсе — HTTP-контракт её сознательно прячет (SLT-38/39). `0`
- * здесь безопасный дефолт для только что созданных элементов (совпадает с дефолтом в БД), но НЕ
- * гарантированно верен для элемента с историей правок, которого не касалась ни одна WS-мутация
- * в этой сессии: первая же его правка рискует получить разовый `version_conflict` (баннер, без
- * потери данных — сервер отклонит запись, а не примет её вслепую). Полноценная синхронизация
- * версии после гидрации — вне границ SLT-39 (см. развилку в описании тикета), закрывается либо
- * в SLT-40, либо отдельным решением отдать version из GET-ответа.
+ * `version` берём из ответа как есть (SLT-40) — `GET /boards/:id/elements` теперь её отдаёт
+ * (`ElementListItemResponse`, единственное расширение HTTP-контракта элемента). До этой задачи
+ * здесь стоял дефолт `0`: он совпадал с БД для только что созданных элементов, но был неверен для
+ * элемента с историей правок, которого не коснулась ни одна WS-мутация в этой сессии, — первая же
+ * его правка получала ложный `version_conflict`. Реальная version с гидрации закрывает этот долг.
  */
-export function fromResponse(response: ElementResponse): CanvasElement {
+export function fromResponse(response: ElementListItemResponse): CanvasElement {
   const { boardId: _boardId, createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = response;
-  return { ...rest, version: 0 };
+  return rest;
 }
