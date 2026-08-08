@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 
 import type { ElementService } from '../element/element.service';
 import type { ElementEntity } from '../element/entities/element.entity';
@@ -178,6 +183,19 @@ describe('ElementSyncService', () => {
 
       expect(result).toEqual({ ok: false, reason: 'invalid_payload' });
     });
+
+    it('переводит недостаток роли (403 SLT-41, viewer) в reject forbidden', async () => {
+      const { service, upsertEntity } = createDependencies();
+      const { socket, to } = fakeSocket();
+      // Сокет В КОМНАТЕ (иначе отсеклось бы раньше, на isInBoardRoom, с access_denied) — но
+      // роль viewer, и ElementService бросает forbiddenWrite().
+      upsertEntity.mockRejectedValue(new ForbiddenException('Недостаточно прав для изменения'));
+
+      const result = await service.handleCreate(socket, createElementCreatePayload());
+
+      expect(result).toEqual({ ok: false, reason: 'forbidden' });
+      expect(to).not.toHaveBeenCalled();
+    });
   });
 
   describe('handleUpdate (element_update)', () => {
@@ -261,6 +279,22 @@ describe('ElementSyncService', () => {
       expect(result).toEqual({ ok: false, reason: 'not_found' });
     });
 
+    it('на роль viewer отдаёт forbidden, не рассылая (SLT-41)', async () => {
+      const { service, patchVersioned } = createDependencies();
+      const { socket, to } = fakeSocket();
+      patchVersioned.mockResolvedValue({ status: 'forbidden' });
+
+      const result = await service.handleUpdate(socket, {
+        boardId: BOARD_ID,
+        id: ELEMENT_ID,
+        version: 1,
+        changes: { x: 99 },
+      });
+
+      expect(result).toEqual({ ok: false, reason: 'forbidden' });
+      expect(to).not.toHaveBeenCalled();
+    });
+
     it('отклоняет payload без обязательных полей адреса, не сходив в ElementService', async () => {
       const { service, patchVersioned } = createDependencies();
       const { socket } = fakeSocket();
@@ -342,6 +376,21 @@ describe('ElementSyncService', () => {
       });
 
       expect(result).toEqual({ ok: false, reason: 'not_found' });
+    });
+
+    it('на роль viewer отдаёт forbidden, не удаляя и не рассылая (SLT-41)', async () => {
+      const { service, removeVersioned } = createDependencies();
+      const { socket, to } = fakeSocket();
+      removeVersioned.mockResolvedValue({ status: 'forbidden' });
+
+      const result = await service.handleDelete(socket, {
+        boardId: BOARD_ID,
+        id: ELEMENT_ID,
+        version: 1,
+      });
+
+      expect(result).toEqual({ ok: false, reason: 'forbidden' });
+      expect(to).not.toHaveBeenCalled();
     });
   });
 
