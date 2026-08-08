@@ -248,9 +248,9 @@ describe('BoardService', () => {
   });
 
   describe('findElements', () => {
-    it('отдаёт элементы владельцу без version и deletedAt', async () => {
+    it('отдаёт элементы владельцу с version (SLT-40), без deletedAt', async () => {
       const { boardService, findElements } = createDependencies();
-      findElements.mockResolvedValue([createElementEntity()]);
+      findElements.mockResolvedValue([createElementEntity({ version: 3 })]);
 
       const result = await boardService.findElements(BOARD_ID, USER_ID);
 
@@ -270,6 +270,7 @@ describe('BoardService', () => {
           seed: 42,
           order: 1,
           data: { width: 120, height: 80 },
+          version: 3,
           createdAt: CREATED_AT,
           updatedAt: UPDATED_AT,
         },

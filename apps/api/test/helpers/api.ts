@@ -2,6 +2,7 @@ import {
   boardListResponseSchema,
   type BoardResponse,
   boardResponseSchema,
+  type ElementListItemResponse,
   elementListResponseSchema,
   type ElementResponse,
   elementResponseSchema,
@@ -81,7 +82,7 @@ export const USER_B: TestUser = {
  * `Date` в памяти сервера и строка на проводе. Поэтому выходы проверяются РАНТАЙМОМ, на живых
  * телах ответов, и падение здесь означает ровно одно: сервер отдаёт не то, что обещает пакет.
  */
-export type { BoardResponse, ElementResponse };
+export type { BoardResponse, ElementListItemResponse, ElementResponse };
 
 /**
  * Разбор тела ответа схемой контракта.
@@ -102,7 +103,7 @@ export function parseElementResponse(body: unknown): ElementResponse {
   return elementResponseSchema.parse(body);
 }
 
-export function parseElementListResponse(body: unknown): ElementResponse[] {
+export function parseElementListResponse(body: unknown): ElementListItemResponse[] {
   return elementListResponseSchema.parse(body);
 }
 

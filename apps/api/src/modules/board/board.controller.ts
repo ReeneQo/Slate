@@ -13,7 +13,7 @@ import {
 
 import { Authorization } from '../../shared/decorators/authorization.decorator';
 import { Authorized } from '../../shared/decorators/authorized.decorator';
-import type { ElementDto } from '../element/dto/element.dto';
+import type { ElementListItemDto } from '../element/dto/element.dto';
 import { BoardService } from './board.service';
 import type { BoardDto } from './dto/board.dto';
 import { CreateBoardDto } from './dto/create-board.dto';
@@ -76,7 +76,7 @@ export class BoardController {
   findElements(
     @Param('id', ParseUUIDPipe) boardId: string,
     @Authorized('id') userId: string,
-  ): Promise<ElementDto[]> {
+  ): Promise<ElementListItemDto[]> {
     return this.boardService.findElements(boardId, userId);
   }
 
