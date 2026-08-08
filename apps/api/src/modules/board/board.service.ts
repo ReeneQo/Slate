@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 
 import { type ElementListItemDto, toElementListItemDto } from '../element/dto/element.dto';
+import type { AccessLevel } from './board.access';
 import { BoardRepository } from './board.repository';
 import { type BoardDto, toBoardDto } from './dto/board.dto';
 import type { CreateBoardDto } from './dto/create-board.dto';
@@ -41,42 +42,26 @@ export class BoardService {
   }
 
   /**
-   * Убедиться, что доска доступна пользователю. Ничего не возвращает — вопрос здесь не «дай
-   * данные», а «можно ли».
+   * Уровень доступа пользователя к доске — единая точка входа для ВСЕХ потребителей вне
+   * board-модуля (SLT-41, замена булевой `canAccess` из SLT-19).
    *
-   * Единственный вход для ДРУГИХ модулей: element-модуль (SLT-20) обязан проверить доступ к
-   * доске перед вставкой элемента, а вставка — единственная операция, куда область видимости
-   * не вклеить (строки ещё нет). Все прочие операции над элементом несут scope доски прямо в
-   * своём `where` и в этом методе не нуждаются: вызов «на всякий случай» перед каждой мутацией
-   * был бы лишним round-trip'ом и ложным ощущением, что защита именно в нём.
+   * Возвращает не «да/нет», а РОЛЬ: `null` (доступа нет) | `'viewer'` | `'editor'` | `'owner'`.
+   * Раньше здесь напрашивались бы ДВА метода — булев `canAccess` для доступа и отдельный
+   * `getRole` для роли, — и вызывающему, которому нужна роль (проверка перед мутацией),
+   * пришлось бы ходить в БД дважды. Здесь один запрос отвечает на оба вопроса сразу: «пускать»
+   * решает `access !== null`, «пускать ли писать» — `canWrite(access)` (board.access.ts).
    *
-   * Наружу отдан сервис, а не репозиторий (см. board.module): так у element-модуля нет способа
-   * дотянуться до данных доски мимо правил, а отказ формулируется в одном месте — здесь.
+   * Единственный вход для ДРУГИХ модулей: element-модуль читает и пишет доступ ИМЕННО отсюда,
+   * WebSocket-шлюз (SLT-33) авторизует `join_board` тем же вызовом. `NotFoundException` здесь
+   * не бросается — это транспорт-нейтральное ядро, а не HTTP-хелпер: HTTP-контроллеры и
+   * WS-обработчики сами решают, во что превратить `null`/`'viewer'` (404, 403 или доменный
+   * reject-ack), — см. `boardNotFound`/`forbiddenWrite` и их использование в ElementService.
    *
-   * @throws {NotFoundException} доска не существует ИЛИ принадлежит другому пользователю
+   * Наружу отдан сервис, а не репозиторий (см. board.module): так у других модулей нет способа
+   * дотянуться до данных доски мимо правил доступа.
    */
-  async assertAccessible(boardId: string, userId: string): Promise<void> {
-    if (!(await this.canAccess(boardId, userId))) {
-      throw boardNotFound();
-    }
-  }
-
-  /**
-   * Тот же инвариант доступа, что у `assertAccessible`, но БЕЗ HTTP-исключения — просто «да/нет».
-   *
-   * Существует ради вызывающих вне HTTP: WebSocket-шлюз этапа 3 (join в комнату доски, SLT-33)
-   * решает по сокету, пускать ли клиента, и `NotFoundException` (то есть HTTP-статус 404) в
-   * реалтайме неуместен — там отказ едет назад ack-callback'ом с доменной причиной, а не
-   * HTTP-кодом. Поэтому наружу торчат ДВЕ формы одного правила: бросающая `assertAccessible`
-   * для контроллеров и булева `canAccess` для транспортов, где исключение не к месту.
-   *
-   * Обе идут через ОДНО ядро — `existsAccessible` в репозитории (там же вклеен access-scope), —
-   * и `assertAccessible` теперь выражен через `canAccess`: правило доступа определено единожды,
-   * а не продублировано на два метода, которые однажды разъедутся. Репозиторий наружу по-прежнему
-   * не отдаётся (см. board.module), поэтому булев доступ проходит через сервис, а не мимо него.
-   */
-  canAccess(boardId: string, userId: string): Promise<boolean> {
-    return this.boardRepository.existsAccessible(boardId, userId);
+  getAccess(boardId: string, userId: string): Promise<AccessLevel> {
+    return this.boardRepository.getAccessLevel(boardId, userId);
   }
 
   /** @throws {NotFoundException} доска не существует ИЛИ принадлежит другому пользователю */
@@ -156,4 +141,23 @@ export class BoardService {
  */
 export function boardNotFound(): NotFoundException {
   return new NotFoundException('Доска не найдена');
+}
+
+/**
+ * 403 на мутацию от участника с ролью `viewer` (SLT-41, решение 3).
+ *
+ * Осознанно ОТДЕЛЬНЫЙ статус от `boardNotFound` (404), а не тот же самый. 404-политика этого
+ * модуля прячет СУЩЕСТВОВАНИЕ ресурса от постороннего — а viewer не посторонний: доска (и
+ * элементы на ней) ему открыто видны на чтение, `getAccess` уже вернул не-null. Скрывать факт
+ * существования ресурса, который сам же отдаёшь на GET той же сессии, было бы не защитой, а
+ * бессмысленной несогласованностью ответов. 403 здесь ничего не раскрывает: viewer и так знает,
+ * что доска существует, — статус лишь называет настоящую причину отказа (недостаточно роли), а
+ * не притворяется, что ресурса нет.
+ *
+ * Один текст на все причины отказа записи (viewer на доске, viewer в WS-комнате) — по тому же
+ * принципу, что у `boardNotFound`: причина не должна разъезжаться по формулировкам в разных
+ * местах кода, которые однажды разойдутся.
+ */
+export function forbiddenWrite(): ForbiddenException {
+  return new ForbiddenException('Недостаточно прав для изменения');
 }
