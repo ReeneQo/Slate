@@ -1,5 +1,6 @@
 import { ElementRepository } from '../src/modules/element/element.repository';
 import {
+  addBoardMember,
   boardElementsUrl,
   type BoardResponse,
   createBoard,
@@ -368,6 +369,81 @@ describe('Element (e2e)', () => {
       const stored = await testApp.prisma.element.findUnique({ where: { id: ELEMENT_ID } });
 
       expect(stored?.boardId).toBe(board.id);
+    });
+  });
+
+  describe('участники доски: роли editor/viewer (SLT-41)', () => {
+    /**
+     * Ровно то, что требуют решения SLT-41: editor пишет наравне с owner, viewer читает, но
+     * получает отказ на запись, посторонний (не-member) по-прежнему не видит доску вовсе.
+     * Member заводится напрямую через Prisma (`addBoardMember`) — API приглашений (SLT-42) ещё
+     * нет, а тест не должен ждать его появления, чтобы проверить уже реализованное чтение member'ов.
+     */
+    it('editor создаёт, обновляет и удаляет элементы на чужой доске', async () => {
+      await addBoardMember(testApp, board.id, boris.userId, 'editor');
+
+      const created = await boris.agent.put(elementUrl(ELEMENT_ID)).send(elementBody(board.id));
+      const patched = await boris.agent.patch(elementUrl(ELEMENT_ID)).send({ x: 500 });
+      const deleted = await boris.agent.delete(elementUrl(ELEMENT_ID));
+
+      expect(created.status).toBe(201);
+      expect(patched.status).toBe(200);
+      expect(deleted.status).toBe(204);
+      expect(await liveElementIds()).toEqual([]);
+    });
+
+    it('viewer читает содержимое доски, созданное владельцем', async () => {
+      await anna.agent.put(elementUrl(ELEMENT_ID)).send(elementBody(board.id));
+      await addBoardMember(testApp, board.id, boris.userId, 'viewer');
+
+      const response = await boris.agent.get(boardElementsUrl(board.id));
+
+      expect(response.status).toBe(200);
+      expect(parseElementListResponse(response.body).map((element) => element.id)).toEqual([
+        ELEMENT_ID,
+      ]);
+    });
+
+    it('viewer получает 403 на PUT/PATCH/DELETE — доска видна, писать нельзя', async () => {
+      await anna.agent.put(elementUrl(ELEMENT_ID)).send(elementBody(board.id));
+      await addBoardMember(testApp, board.id, boris.userId, 'viewer');
+
+      // Последовательно — та же причина, что и в owner-изоляции: параллельные запросы к
+      // supertest-серверу изредка дают ECONNRESET.
+      const created = await boris.agent.put(elementUrl(elementId(9))).send(elementBody(board.id));
+      const patched = await boris.agent.patch(elementUrl(ELEMENT_ID)).send({ x: 999 });
+      const deleted = await boris.agent.delete(elementUrl(ELEMENT_ID));
+
+      // 403, а НЕ 404: viewer'у доска и элемент видны (он их только что прочитал бы через GET),
+      // так что 404 здесь соврал бы про причину отказа — та же логика, что различает
+      // forbiddenWrite и boardNotFound в ElementService (SLT-41).
+      expect(created.status).toBe(403);
+      expect(patched.status).toBe(403);
+      expect(deleted.status).toBe(403);
+
+      // Ничего не изменилось и не появилось.
+      const stored = await testApp.prisma.element.findUnique({ where: { id: ELEMENT_ID } });
+
+      expect(stored?.x).toBe(10);
+      expect(stored?.deletedAt).toBeNull();
+      await expect(
+        testApp.prisma.element.findUnique({ where: { id: elementId(9) } }),
+      ).resolves.toBeNull();
+    });
+
+    it('посторонний по-прежнему получает 404 на доску с чужими участниками', async () => {
+      // Регресс изоляции (SLT-41): наличие ЛЮБЫХ участников на доске не должно приоткрыть её
+      // третьему лицу — scope сравнивает userId, а не «есть ли вообще кто-то в BoardMember».
+      await addBoardMember(testApp, board.id, boris.userId, 'editor');
+      const carla = await signUp(testApp, {
+        email: 'carla@example.test',
+        displayName: 'Carla',
+        password: 'yet another horse',
+      });
+
+      const response = await carla.agent.get(boardElementsUrl(board.id));
+
+      expect(response.status).toBe(404);
     });
   });
 
