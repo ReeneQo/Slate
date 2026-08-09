@@ -9,6 +9,7 @@ export * from './auth/auth.constants.js';
 export * from './auth/auth.contracts.js';
 export * from './board/board.constants.js';
 export * from './board/board.contracts.js';
+export * from './board/board-member.types.js';
 export * from './element/element.constants.js';
 export * from './element/element.contracts.js';
 export * from './element/element.types.js';
