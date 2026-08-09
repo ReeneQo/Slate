@@ -1,12 +1,18 @@
 import type { BoardMemberRole } from '@slate/database';
 import {
+  type BoardListItemResponse,
   boardListResponseSchema,
+  type BoardMemberListResponse,
+  boardMemberListResponseSchema,
+  type BoardMemberResponse,
+  boardMemberResponseSchema,
   type BoardResponse,
   boardResponseSchema,
   type ElementListItemResponse,
   elementListResponseSchema,
   type ElementResponse,
   elementResponseSchema,
+  type InviteMemberInput,
 } from '@slate/shared-types';
 
 import type { TestAgent, TestApp } from './test-app';
@@ -35,6 +41,14 @@ export function boardUrl(boardId: string): string {
 
 export function boardElementsUrl(boardId: string): string {
   return `${BOARDS_URL}/${boardId}/elements`;
+}
+
+export function boardMembersUrl(boardId: string): string {
+  return `${BOARDS_URL}/${boardId}/members`;
+}
+
+export function boardMemberUrl(boardId: string, userId: string): string {
+  return `${boardMembersUrl(boardId)}/${userId}`;
 }
 
 export function elementUrl(elementId: string): string {
@@ -83,7 +97,14 @@ export const USER_B: TestUser = {
  * `Date` в памяти сервера и строка на проводе. Поэтому выходы проверяются РАНТАЙМОМ, на живых
  * телах ответов, и падение здесь означает ровно одно: сервер отдаёт не то, что обещает пакет.
  */
-export type { BoardResponse, ElementListItemResponse, ElementResponse };
+export type {
+  BoardListItemResponse,
+  BoardMemberListResponse,
+  BoardMemberResponse,
+  BoardResponse,
+  ElementListItemResponse,
+  ElementResponse,
+};
 
 /**
  * Разбор тела ответа схемой контракта.
@@ -96,8 +117,16 @@ export function parseBoardResponse(body: unknown): BoardResponse {
   return boardResponseSchema.parse(body);
 }
 
-export function parseBoardListResponse(body: unknown): BoardResponse[] {
+export function parseBoardListResponse(body: unknown): BoardListItemResponse[] {
   return boardListResponseSchema.parse(body);
+}
+
+export function parseBoardMemberResponse(body: unknown): BoardMemberResponse {
+  return boardMemberResponseSchema.parse(body);
+}
+
+export function parseBoardMemberListResponse(body: unknown): BoardMemberListResponse {
+  return boardMemberListResponseSchema.parse(body);
 }
 
 export function parseElementResponse(body: unknown): ElementResponse {
@@ -152,14 +181,11 @@ export async function createBoard(
 }
 
 /**
- * Заводит участника доски НАПРЯМУЮ через Prisma, минуя API (SLT-41: share CRUD — SLT-42, его
- * ещё нет). Единственный законный способ создать member в e2e на этом этапе: тесты доступа не
- * ждут появления `POST /boards/:id/members`, а вставляют строку сами — SLT-41 читает
- * `BoardMember`, но не пишет её ничем, кроме этого.
- *
- * Не через `createBoard`/HTTP, потому что вставлять ЗДЕСЬ через Prisma — не то же самое, что
- * готовить данные для ЧТЕНИЯ (см. докстринг модуля): вставка через прямой INSERT — единственно
- * возможный путь, а не сокращение honest-пути, которого попросту не существует.
+ * Заводит участника доски НАПРЯМУЮ через Prisma, минуя API. С SLT-42 есть честный путь —
+ * `inviteMember` ниже, — но этот хелпер остаётся: тесты доступа (SLT-41), которым важна только
+ * РОЛЬ на доске, а не флоу приглашения, не обязаны тащить за собой инвайт (лишний email, лишняя
+ * регистрация второго аккаунта ради того, кого приглашают). Два пути осознанно сосуществуют:
+ * этот — для тестов ДОСТУПА, `inviteMember` — для тестов самого ШЕРИНГА.
  */
 export async function addBoardMember(
   testApp: TestApp,
@@ -168,6 +194,23 @@ export async function addBoardMember(
   role: BoardMemberRole,
 ): Promise<void> {
   await testApp.prisma.boardMember.create({ data: { boardId, userId, role } });
+}
+
+/** Приглашение участника через настоящий API (SLT-42) — с разбором ответа схемой контракта. */
+export async function inviteMember(
+  agent: TestAgent,
+  boardId: string,
+  input: InviteMemberInput,
+): Promise<BoardMemberResponse> {
+  const response = await agent.post(boardMembersUrl(boardId)).send(input);
+
+  if (response.status !== 201) {
+    throw new Error(
+      `Приглашение не удалось (${response.status}): ${JSON.stringify(response.body)}`,
+    );
+  }
+
+  return parseBoardMemberResponse(response.body);
 }
 
 /**

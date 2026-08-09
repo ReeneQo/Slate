@@ -365,15 +365,16 @@ describe('Board (e2e)', () => {
       expect(response.status).toBe(404);
     });
 
-    it('viewer не появляется в GET /boards (список остаётся owner-only, SLT-42)', async () => {
+    it('viewer появляется в GET /boards как shared, с ролью viewer (SLT-42)', async () => {
       const board = await createBoard(anna.agent, 'Доска Анны');
       await addBoardMember(testApp, board.id, boris.userId, 'viewer');
 
       const response = await boris.agent.get(BOARDS_URL);
 
-      // Список "мои доски" в SLT-41 сознательно не трогается — owned ∪ shared придёт в SLT-42.
-      expect(response.body).toEqual([]);
-      expect(JSON.stringify(response.body)).not.toContain(board.id);
+      // owned ∪ shared (SLT-42) — union и роль по каждой доске проверены подробнее в
+      // board-member.e2e-spec; здесь — регресс-подтверждение, что доступ по SLT-41 отражается
+      // в списке.
+      expect(parseBoardListResponse(response.body)).toEqual([{ ...board, role: 'viewer' }]);
     });
   });
 
