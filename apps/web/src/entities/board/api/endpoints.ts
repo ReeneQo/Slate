@@ -11,4 +11,8 @@ export const BOARD_ENDPOINTS = {
   root: '/boards',
   /** `DELETE /boards/:id`, `GET /boards/:id` — конкретная доска. */
   byId: (id: string): string => `/boards/${id}`,
+  /** `GET /boards/:id/members` (список) и `POST /boards/:id/members` (приглашение, SLT-42). */
+  members: (boardId: string): string => `/boards/${boardId}/members`,
+  /** `PATCH /boards/:id/members/:userId` (роль), `DELETE .../:userId` (отзыв) — по userId, не по id строки членства. */
+  member: (boardId: string, userId: string): string => `/boards/${boardId}/members/${userId}`,
 } as const;
