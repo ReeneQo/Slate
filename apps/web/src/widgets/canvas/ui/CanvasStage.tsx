@@ -68,12 +68,12 @@ export function CanvasStage(): ReactElement {
   const selectedTool = useEditorStore((state) => state.selectedTool);
   const setTool = useEditorStore((state) => state.setTool);
   const selectedElementIds = useEditorStore(useShallow((state) => state.selectedElementIds));
+  const canEdit = useEditorStore((state) => state.canEdit);
   const elementIds = useDocumentStore(useShallow((state) => state.elementIds));
 
-  // Фигуры таскаются нативным Konva draggable, но только в select-режиме и вне pan:
-  // при рисовании узел не должен ловить drag (иначе не нарисовать поверх), в pan —
-  // ехать должно полотно, а не фигура.
-  const shapesDraggable = selectedTool === 'select' && !isPanMode;
+  // Фигуры таскаются нативным Konva draggable, но только в select-режиме, вне pan и при праве на
+  // мутацию (SLT-43, роль-гейт): viewer выделяет (см. useSelection — не гейтится), но не тащит.
+  const shapesDraggable = selectedTool === 'select' && !isPanMode && canEdit;
 
   // Привязываем Transformer к выделенным узлам. Он слушает их drag и рисует рамку,
   // следуя за фигурой во время переноса — поэтому индикатор не отстаёт, хотя стор
@@ -133,7 +133,9 @@ export function CanvasStage(): ReactElement {
           <RemoteCursorsLayer scale={viewport.scale} />
         </Stage>
       </div>
-      <Toolbar selectedTool={selectedTool} onSelectTool={setTool} />
+      {/* Роль-гейт (SLT-43): viewer не рисует — тулбар инструментов рисования скрыт целиком,
+          а не задизейблен по кнопке (единый флаг, не размазанный if по элементам). */}
+      {canEdit && <Toolbar selectedTool={selectedTool} onSelectTool={setTool} />}
     </>
   );
 }

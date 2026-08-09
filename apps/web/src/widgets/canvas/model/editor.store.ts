@@ -22,6 +22,15 @@ interface EditorState {
   /** Фигура, которую тащим прямо сейчас. Эфемерна — живёт только до коммита. */
   draft: DraftElement | null;
   viewport: Viewport;
+  /**
+   * Роль-гейт холста (SLT-43, `deriveCanEdit`): может ли текущий юзер мутировать документ.
+   * Живёт здесь, а не пропом сквозь каждый обработчик ввода (useDrawing/useCanvasHotkeys/
+   * useCanvasInteraction уже читают этот стор через getState() по тому же паттерну, что
+   * `viewport`/`selectedTool`) — единая точка чтения вместо размазанного «if viewer» по местам.
+   * Дефолт `false`: до первого вызова `setCanEdit` (роль ещё не резолвилась) холст read-only —
+   * тот же безопасный дефолт, что и у `deriveCanEdit(undefined)`.
+   */
+  canEdit: boolean;
 }
 
 interface EditorActions {
@@ -29,6 +38,7 @@ interface EditorActions {
   setDraft: (draft: DraftElement | null) => void;
   setViewport: (viewport: Viewport) => void;
   setSelectedElementIds: (ids: string[]) => void;
+  setCanEdit: (canEdit: boolean) => void;
 }
 
 export type EditorStore = EditorState & EditorActions;
@@ -41,6 +51,7 @@ export const useEditorStore = create<EditorStore>()(
     selectedElementIds: [],
     draft: null,
     viewport: INITIAL_VIEWPORT,
+    canEdit: false,
 
     setTool: (tool) =>
       set((state) => {
@@ -65,6 +76,11 @@ export const useEditorStore = create<EditorStore>()(
     setSelectedElementIds: (ids) =>
       set((state) => {
         state.selectedElementIds = ids;
+      }),
+
+    setCanEdit: (canEdit) =>
+      set((state) => {
+        state.canEdit = canEdit;
       }),
   })),
 );
