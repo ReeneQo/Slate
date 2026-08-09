@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
+import { authUserResponseSchema } from '../auth/auth.contracts.js';
 import { BOARD_TITLE_MAX_LENGTH } from './board.constants.js';
+import { boardAccessRoleSchema, boardMemberRoleSchema } from './board-member.types.js';
 
 /**
  * Контракты board-эндпоинтов.
@@ -74,8 +76,24 @@ export const boardResponseSchema = z.strictObject({
 
 export type BoardResponse = z.infer<typeof boardResponseSchema>;
 
+/**
+ * Элемент `GET /boards` (SLT-42): та же форма, что `boardResponseSchema`, плюс `role` — уровень
+ * ДОСТУПА текущего юзера к этой доске (`owner` | `editor` | `viewer`).
+ *
+ * Список — теперь owned ∪ shared (SLT-42, решение 3), и без роли клиент не смог бы отличить
+ * «моя доска» от «расшаренная со мной» и не знал бы, показывать ли элементы управления, доступные
+ * только owner'у (рейм-гейт на UI — SLT-43, но контракт для него нужен уже здесь). Отдельная схема,
+ * а не поле на `boardResponseSchema` целиком: `GET /boards/:id` (одиночная доска) роли не несёт —
+ * там всегда «моя» в смысле открытого доступа, а различать owner/editor/viewer там не для чего.
+ */
+export const boardListItemResponseSchema = boardResponseSchema.extend({
+  role: boardAccessRoleSchema,
+});
+
+export type BoardListItemResponse = z.infer<typeof boardListItemResponseSchema>;
+
 /** Список досок: `GET /boards`. Одно определение на клиента и на тесты — как и у элементов. */
-export const boardListResponseSchema = z.array(boardResponseSchema);
+export const boardListResponseSchema = z.array(boardListItemResponseSchema);
 
 /**
  * Тип списка, выведенный из схемы (`z.infer`) — как и у остальных контрактов пакета. Клиент
@@ -83,3 +101,51 @@ export const boardListResponseSchema = z.array(boardResponseSchema);
  * не даёт типу и рантайм-проверке разойтись.
  */
 export type BoardListResponse = z.infer<typeof boardListResponseSchema>;
+
+/**
+ * Контракты шеринга (SLT-42): `POST/PATCH/DELETE/GET /boards/:id/members`.
+ *
+ * Email — резолв приглашаемого ОТДЕЛЬНЫМ полем, не «identifier» union. Сегодня приглашение только
+ * по email; когда появится username-шеринг (реестр), добавится вторая ветка резолва на бэке
+ * (`resolveInvitee`), а этот контракт получит своё поле `username?` точечно — без спекулятивного
+ * `identifier: { type, value }` уже сейчас (YAGNI, решение 1 тикета).
+ */
+const inviteEmailSchema = z.email('Некорректный email');
+
+/** Вход `POST /boards/:id/members` — пригласить существующего пользователя по email. */
+export const inviteMemberSchema = z.object({
+  email: inviteEmailSchema,
+  role: boardMemberRoleSchema,
+});
+
+export type InviteMemberInput = z.infer<typeof inviteMemberSchema>;
+
+/** Вход `PATCH /boards/:id/members/:userId` — сменить роль участника. */
+export const updateMemberRoleSchema = z.object({
+  role: boardMemberRoleSchema,
+});
+
+export type UpdateMemberRoleInput = z.infer<typeof updateMemberRoleSchema>;
+
+/**
+ * Участник в ответе — форма НА ПРОВОДЕ. `user` — тот же минимальный профиль, что в ответе
+ * login/register (`authUserResponseSchema`: id/email/displayName, без `hasPassword`/`createdAt`
+ * профиля): списку участников чужой `hasPassword` не нужен и не должен утекать.
+ *
+ * `id` здесь — id СТРОКИ `BoardMember`, не пользователя (тот — `user.id`). Управление (PATCH/DELETE)
+ * при этом адресуется по `user.id` в URL (`:userId`), а не по этому `id`: с точки зрения клиента
+ * участник — это пользователь на доске, а не запись в таблице членства.
+ */
+export const boardMemberResponseSchema = z.strictObject({
+  id: z.uuid(),
+  role: boardMemberRoleSchema,
+  createdAt: z.iso.datetime(),
+  user: authUserResponseSchema,
+});
+
+export type BoardMemberResponse = z.infer<typeof boardMemberResponseSchema>;
+
+/** Список участников: `GET /boards/:id/members`. */
+export const boardMemberListResponseSchema = z.array(boardMemberResponseSchema);
+
+export type BoardMemberListResponse = z.infer<typeof boardMemberListResponseSchema>;

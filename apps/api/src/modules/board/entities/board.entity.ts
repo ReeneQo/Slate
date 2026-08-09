@@ -1,4 +1,4 @@
-import type { Prisma } from '@slate/database';
+import type { BoardMemberRole, Prisma } from '@slate/database';
 
 /**
  * Набор полей доски, который вообще покидает репозиторий. ИСТОЧНИК ИСТИНЫ — этот select,
@@ -27,3 +27,13 @@ export const BOARD_SELECT = {
 
 /** Доска в том виде, в каком её видит сервис: без version, без связей. */
 export type BoardEntity = Prisma.BoardGetPayload<{ select: typeof BOARD_SELECT }>;
+
+/**
+ * Доска в «моих досках» (SLT-42, решение 3) — `BoardEntity` плюс `role`, уровень доступа ИМЕННО
+ * этого пользователя (`owner` | роль из `BoardMember`). `null` в объединении не бывает: строка
+ * попадает сюда только пройдя `accessibleBoardScope`, то есть доступ уже гарантирован построением
+ * запроса (`BoardRepository.findAllAccessibleBy`).
+ */
+export interface AccessibleBoardEntity extends BoardEntity {
+  role: 'owner' | BoardMemberRole;
+}

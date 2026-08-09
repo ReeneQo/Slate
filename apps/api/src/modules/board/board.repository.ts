@@ -9,7 +9,11 @@ import {
   LIVE_ELEMENT_WHERE,
 } from '../element/entities/element.entity';
 import { accessibleBoardScope, type AccessLevel, resolveAccessLevel } from './board.access';
-import { BOARD_SELECT, type BoardEntity } from './entities/board.entity';
+import {
+  type AccessibleBoardEntity,
+  BOARD_SELECT,
+  type BoardEntity,
+} from './entities/board.entity';
 
 /** Код Prisma для «запись под условие не найдена» (update/delete не нашли строку). */
 const RECORD_NOT_FOUND = 'P2025';
@@ -50,22 +54,42 @@ export class BoardRepository {
   }
 
   /**
-   * «Мои доски» — только СВОИ, безо всяких OR. Имя метода несёт эту гарантию намеренно:
-   * когда на этапе 3 появится шеринг, `findAllOwnedBy` не примут за «все доступные», и
-   * добавление расшаренных досок в дашборд станет отдельным осознанным решением
-   * (`findAllAccessibleBy` или два раздела в интерфейсе), а не побочным эффектом правки
-   * общего хелпера. Область видимости КОНКРЕТНОЙ доски и состав СПИСКА — разные вопросы,
-   * и сейчас они совпадают лишь потому, что шеринга нет.
+   * «Мои доски» — owned ∪ shared (SLT-42, решение 3; было `findAllOwnedBy`, только свои, до
+   * появления шеринга). Переименование, а не тихое расширение старого метода на глазах: имя
+   * несёт гарантию буквально, а `findAllOwnedBy` и «сузить до owner∪member» в одном методе
+   * значило бы, что имя лжёт о своём поведении.
    *
-   * Сортировка по updatedAt: на дашборде сверху то, что правил последним. Считает БД, а не
-   * сервис, — сортировать в приложении означало бы тянуть все строки, чтобы упорядочить.
+   * `accessibleBoardScope` — тот же scope, что у `findAccessible`/`getAccessLevel`: единая
+   * область видимости доски, применённая к списку, а не вторая независимая формулировка «что
+   * доступно».
+   *
+   * `ownerId`/`members` в select есть, но НЕ уходят в `BoardEntity` наружу — только на вход
+   * `resolveAccessLevel`, который сворачивает их в `role` (см. маппинг ниже). Утечка `ownerId`
+   * из списка была бы такой же дырой, как утечка `version`.
+   *
+   * Сортировка по updatedAt — как и раньше: на дашборде сверху то, что правили последним,
+   * считает БД, а не сервис.
    */
-  findAllOwnedBy(ownerId: string): Promise<BoardEntity[]> {
-    return this.prisma.board.findMany({
-      where: { ownerId },
+  async findAllAccessibleBy(userId: string): Promise<AccessibleBoardEntity[]> {
+    const boards = await this.prisma.board.findMany({
+      where: accessibleBoardScope(userId),
       orderBy: { updatedAt: 'desc' },
-      select: BOARD_SELECT,
+      select: {
+        ...BOARD_SELECT,
+        ownerId: true,
+        members: { where: { userId }, select: { role: true } },
+      },
     });
+
+    return boards.map((board) => ({
+      id: board.id,
+      title: board.title,
+      createdAt: board.createdAt,
+      updatedAt: board.updatedAt,
+      // Не может быть null: каждая строка уже прошла accessibleBoardScope — доступ гарантирован
+      // самим построением запроса, а не проверен отдельно после чтения.
+      role: resolveAccessLevel(board, userId) as AccessibleBoardEntity['role'],
+    }));
   }
 
   /**
