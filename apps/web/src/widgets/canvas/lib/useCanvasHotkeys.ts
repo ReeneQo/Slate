@@ -30,8 +30,11 @@ export function useCanvasHotkeys(): void {
       switch (event.key) {
         case 'Delete':
         case 'Backspace': {
-          const { selectedElementIds, setSelectedElementIds } = useEditorStore.getState();
+          const { selectedElementIds, setSelectedElementIds, canEdit } = useEditorStore.getState();
           if (selectedElementIds.length === 0) return; // нечего удалять — не гасим клавишу
+          // Роль-гейт (SLT-43): viewer выделяет (для просмотра), но не удаляет — выделение
+          // остаётся активным (см. editor.store), удаление гасится здесь же, отдельным условием.
+          if (!canEdit) return;
 
           // preventDefault: без фокуса на поле Backspace листает историю браузера («назад»).
           event.preventDefault();

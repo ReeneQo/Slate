@@ -54,10 +54,14 @@ import { isApiError } from '@/shared/api';
 export type HydrationStatus = 'loading' | 'ready' | 'error';
 
 /**
- * Причина активного баннера сохранения (SLT-40): сеть/сервер против version-конфликта — разное
- * действие пользователя, разный текст (см. SyncErrorBanner). `null` — баннер скрыт.
+ * Причина активного баннера сохранения (SLT-40, дополнено SLT-43): сеть/сервер, version-конфликт
+ * и «доступ отозван» — три разных действия пользователя, три разных текста (см. SyncErrorBanner).
+ * `forbidden` — свой отказ мутации (viewer-роль, SLT-41 `forbidden`): отдельно от `network`, чтобы
+ * понижённый/отозванный участник видел «доступ изменён», а не «не удалось сохранить» (тот текст
+ * подразумевает «повтори», а повтор здесь бессмысленен — сервер откажет снова, пока роль не
+ * вернут). `null` — баннер скрыт.
  */
-export type SaveErrorKind = 'network' | 'conflict';
+export type SaveErrorKind = 'network' | 'conflict' | 'forbidden';
 
 export interface CanvasSyncState {
   hydration: HydrationStatus;
@@ -230,14 +234,33 @@ function emitElementDelete(
 }
 
 /**
- * Reject одной мутации → баннер какой природы (SLT-40 Р1/Р5). `version_conflict` — сервер уже
- * опередил, это НЕ сетевой сбой, действие пользователя иное (перечитать актуальное, а не
- * повторить попытку), поэтому отдельная причина. Остальные (`access_denied`/`not_found`/
- * `conflict`/`invalid_payload`) — баги/граничные случаи, не штатный конфликт редактирования;
- * размножать UI под каждый смысла нет, они делят баннер с сетевым сбоем (Р5, «минимально»).
+ * Reject одной мутации → баннер какой природы (SLT-40 Р1/Р5, дополнено SLT-43). `version_conflict`
+ * — сервер уже опередил, это НЕ сетевой сбой, действие пользователя иное (перечитать актуальное,
+ * а не повторить попытку). `forbidden` — своя мутация отклонена по роли (понижен/отозван, SLT-41)
+ * — тоже не «повтори», а «доступ изменён». Остальные (`access_denied`/`not_found`/`conflict`/
+ * `invalid_payload`) — баги/граничные случаи, не штатный конфликт редактирования; размножать UI
+ * под каждый смысла нет, они делят баннер с сетевым сбоем (Р5, «минимально»).
  */
 function classifyRejectReason(reason: ElementMutationRejectReason): SaveErrorKind {
-  return reason === 'version_conflict' ? 'conflict' : 'network';
+  if (reason === 'version_conflict') return 'conflict';
+  if (reason === 'forbidden') return 'forbidden';
+  return 'network';
+}
+
+/**
+ * Приоритет причины в сводном баннере пачки (batch delete, SLT-40/43): `forbidden` объясняет, ПОЧЕМУ
+ * остальные штуки в пачке тоже могли не пройти — старше `conflict`, который старше `network`
+ * («просто повтори»).
+ */
+function errorKindPriority(kind: SaveErrorKind): number {
+  switch (kind) {
+    case 'forbidden':
+      return 2;
+    case 'conflict':
+      return 1;
+    case 'network':
+      return 0;
+  }
 }
 
 /**
@@ -324,9 +347,11 @@ export async function sendMutation(
       for (const result of results) {
         if (result.ok) continue;
         const kind = classifyRejectReason(result.reason);
-        // conflict приоритетнее network в сводном баннере пачки: он несёт действие (актуальное
-        // состояние уже применено), network — просто «повтори».
-        if (kind === 'conflict' || errorKind === null) errorKind = kind;
+        // Приоритет в сводном баннере пачки (errorKindPriority): forbidden > conflict > network —
+        // каждый несёт более конкретное действие, чем предыдущий («просто повтори»).
+        if (errorKind === null || errorKindPriority(kind) > errorKindPriority(errorKind)) {
+          errorKind = kind;
+        }
         if (result.reason === 'version_conflict') applyRemoteUpdate(result.element);
       }
       break;

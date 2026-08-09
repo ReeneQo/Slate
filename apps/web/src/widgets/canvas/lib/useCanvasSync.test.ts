@@ -154,6 +154,23 @@ describe('sendMutation', () => {
     expect(listener).not.toHaveBeenCalled();
   });
 
+  it('update: reject "forbidden" (SLT-41 viewer) — forbidden-баннер, стор не трогаем (не incident отдаёт элемент)', async () => {
+    useDocumentStore.getState().applyRemoteCreate(rect('el-1', 3));
+    const ackResult: ElementUpdateAckResult = { ok: false, reason: 'forbidden' };
+    const { socket } = fakeSocket(ackResult);
+    const setSaveError = vi.fn();
+
+    await sendMutation(
+      socket,
+      { type: 'update', id: 'el-1', patch: { x: 999 } },
+      boardId,
+      setSaveError,
+    );
+
+    expect(setSaveError).toHaveBeenCalledWith('forbidden');
+    expect(useDocumentStore.getState().elements['el-1']?.version).toBe(3);
+  });
+
   it('update: reject прочей причины (not_found) — network-баннер, стор не трогаем', async () => {
     useDocumentStore.getState().applyRemoteCreate(rect('el-1', 3));
     const ackResult: ElementUpdateAckResult = { ok: false, reason: 'not_found' };
@@ -272,5 +289,37 @@ describe('sendMutation', () => {
 
     expect(setSaveError).toHaveBeenCalledWith('conflict');
     expect(useDocumentStore.getState().elements.b).toEqual(serverElement);
+  });
+
+  it('delete: пачка с forbidden И конфликтом — сводный баннер приоритизирует forbidden (объясняет остальное, SLT-43)', async () => {
+    let call = 0;
+    const serverElement = rect('b', 7);
+    const emit = vi.fn(
+      (_event: string, _payload: unknown, ack: (result: ElementDeleteAckResult) => void) => {
+        call += 1;
+        ack(
+          call === 1
+            ? { ok: false, reason: 'version_conflict', element: serverElement }
+            : { ok: false, reason: 'forbidden' },
+        );
+      },
+    );
+    const socket = { emit } as unknown as AppSocket;
+    const setSaveError = vi.fn();
+
+    await sendMutation(
+      socket,
+      {
+        type: 'delete',
+        deletions: [
+          { id: 'b', version: 6 },
+          { id: 'c', version: 0 },
+        ],
+      },
+      boardId,
+      setSaveError,
+    );
+
+    expect(setSaveError).toHaveBeenCalledWith('forbidden');
   });
 });

@@ -75,6 +75,10 @@ export interface ElementDeletePayload {
 /**
  * Причина отказа мутации в ack (см. сервер, `ElementMutationRejectReason`):
  *  - `access_denied` — сокет не в комнате доски из payload'а;
+ *  - `forbidden` — сокет В КОМНАТЕ (доступ есть), но роль `viewer`: писать может только
+ *    `editor`/`owner` (SLT-41, `canWrite`). Отдельно от `access_denied` — доска ВИДНА на чтение,
+ *    просто прав на запись мало (SLT-43: собственная ветка баннера — «доступ изменён», не «не
+ *    сохранено»);
  *  - `not_found` — элемент недоступен/не существует/удалён, либо доска исчезла;
  *  - `version_conflict` — update/delete: ожидаемая version устарела;
  *  - `conflict` — create: id занят элементом другой доски/типа;
@@ -82,6 +86,7 @@ export interface ElementDeletePayload {
  */
 export type ElementMutationRejectReason =
   | 'access_denied'
+  | 'forbidden'
   | 'not_found'
   | 'version_conflict'
   | 'conflict'

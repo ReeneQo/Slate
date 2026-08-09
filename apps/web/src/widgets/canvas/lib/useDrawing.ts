@@ -37,8 +37,11 @@ export function useDrawing(): DrawingController {
 
   const start = useCallback(
     (screen: Point): boolean => {
-      const { selectedTool, viewport } = useEditorStore.getState();
+      const { selectedTool, viewport, canEdit } = useEditorStore.getState();
       if (selectedTool === 'select') return false;
+      // Роль-гейт (SLT-43): viewer не рисует — тулбар и так скрыт (см. CanvasStage), но обработчик
+      // остаётся защищён и от прямого вызова/гонки роли, а не только от отсутствия кнопки в UI.
+      if (!canEdit) return false;
 
       const point = screenToCanvas(screen, viewport);
       setDraft(createDraft(selectedTool, point));

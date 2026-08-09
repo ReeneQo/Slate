@@ -1,6 +1,6 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 
-import { type Board, getBoards } from '@/entities/board';
+import { type BoardListItem, getBoards } from '@/entities/board';
 
 import { boardKeys } from './queryKeys';
 
@@ -15,7 +15,7 @@ import { boardKeys } from './queryKeys';
  * Дефолты (retry не-4xx, staleTime, focus-refetch off) заданы на клиенте (createQueryClient) —
  * здесь их не переопределяем, чтобы поведение списка было предсказуемо-единым.
  */
-export function useBoards(): UseQueryResult<Board[]> {
+export function useBoards(): UseQueryResult<BoardListItem[]> {
   return useQuery({
     queryKey: boardKeys.all,
     queryFn: ({ signal }) => getBoards(signal),
