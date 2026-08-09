@@ -3,7 +3,12 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { type ElementListItemDto, toElementListItemDto } from '../element/dto/element.dto';
 import type { AccessLevel } from './board.access';
 import { BoardRepository } from './board.repository';
-import { type BoardDto, toBoardDto } from './dto/board.dto';
+import {
+  type BoardDto,
+  type BoardListItemDto,
+  toBoardDto,
+  toBoardListItemDto,
+} from './dto/board.dto';
 import type { CreateBoardDto } from './dto/create-board.dto';
 import type { UpdateBoardDto } from './dto/update-board.dto';
 
@@ -34,11 +39,14 @@ export class BoardService {
     return toBoardDto(board);
   }
 
-  /** «Мои доски»: только принадлежащие пользователю, без элементов и без счётчиков. */
-  async findAllOwned(userId: string): Promise<BoardDto[]> {
-    const boards = await this.boardRepository.findAllOwnedBy(userId);
+  /**
+   * «Мои доски»: owned ∪ shared (SLT-42, решение 3), каждая с ролью текущего пользователя.
+   * Без элементов и без version — то же, что и раньше у `findAllOwned` (переименован сюда).
+   */
+  async findAllAccessible(userId: string): Promise<BoardListItemDto[]> {
+    const boards = await this.boardRepository.findAllAccessibleBy(userId);
 
-    return boards.map((board) => toBoardDto(board));
+    return boards.map((board) => toBoardListItemDto(board));
   }
 
   /**

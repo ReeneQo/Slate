@@ -8,6 +8,8 @@ import { BOARD_SELECT } from './entities/board.entity';
 const USER_ID = '019fa40d-6841-70ed-8b1d-7c64e6411bd6';
 const BOARD_ID = '019fa5b1-0000-7000-8000-000000000001';
 const TITLE = 'Sprint board';
+const CREATED_AT = new Date('2026-07-29T10:00:00.000Z');
+const UPDATED_AT = new Date('2026-07-30T12:00:00.000Z');
 
 /**
  * Ожидаемая область видимости ЧТЕНИЯ конкретной доски (owner ∪ участник любой роли, SLT-41).
@@ -105,20 +107,74 @@ describe('BoardRepository', () => {
     });
   });
 
-  describe('findAllOwnedBy', () => {
-    it('фильтрует по ownerId и ничего не объединяет с расшаренным', async () => {
+  describe('findAllAccessibleBy', () => {
+    const SELECT_SHAPE = {
+      // Без `id` в отличие от ACCESS_SCOPED_WHERE у findAccessible: это список, а не одна доска —
+      // scope тот же (`accessibleBoardScope`), просто без сужения по конкретному id.
+      where: { OR: [{ ownerId: USER_ID }, { members: { some: { userId: USER_ID } } }] },
+      orderBy: { updatedAt: 'desc' },
+      select: {
+        ...BOARD_SELECT,
+        ownerId: true,
+        members: { where: { userId: USER_ID }, select: { role: true } },
+      },
+    };
+
+    it('запрашивает owned ∪ shared (SLT-42) — тот же scope, что у findAccessible', async () => {
       const { boardRepository, findMany } = createDependencies();
       findMany.mockResolvedValue([]);
 
-      await boardRepository.findAllOwnedBy(USER_ID);
+      await boardRepository.findAllAccessibleBy(USER_ID);
 
-      // Ровно `{ ownerId }`: ни OR, ни members. «Мои доски» на этом этапе — только свои,
-      // union owned ∪ shared появится вместе с шерингом (этап 3) и осознанно.
-      expect(findMany).toHaveBeenCalledWith({
-        where: { ownerId: USER_ID },
-        orderBy: { updatedAt: 'desc' },
-        select: BOARD_SELECT,
-      });
+      expect(findMany).toHaveBeenCalledWith(SELECT_SHAPE);
+    });
+
+    it('владельцу отдаёт role: owner, не отдавая наружу ownerId/members', async () => {
+      const { boardRepository, findMany } = createDependencies();
+      findMany.mockResolvedValue([
+        {
+          id: BOARD_ID,
+          title: TITLE,
+          createdAt: CREATED_AT,
+          updatedAt: UPDATED_AT,
+          ownerId: USER_ID,
+          members: [],
+        },
+      ]);
+
+      const result = await boardRepository.findAllAccessibleBy(USER_ID);
+
+      // toEqual, а не toMatchObject: ownerId/members не должны утечь в результат так же, как
+      // version не утекает из BOARD_SELECT.
+      expect(result).toEqual([
+        { id: BOARD_ID, title: TITLE, createdAt: CREATED_AT, updatedAt: UPDATED_AT, role: 'owner' },
+      ]);
+    });
+
+    it('участнику отдаёт его роль членства (editor/viewer)', async () => {
+      const { boardRepository, findMany } = createDependencies();
+      findMany.mockResolvedValue([
+        {
+          id: BOARD_ID,
+          title: TITLE,
+          createdAt: CREATED_AT,
+          updatedAt: UPDATED_AT,
+          ownerId: 'someone-else',
+          members: [{ role: 'viewer' }],
+        },
+      ]);
+
+      const result = await boardRepository.findAllAccessibleBy(USER_ID);
+
+      expect(result).toEqual([
+        {
+          id: BOARD_ID,
+          title: TITLE,
+          createdAt: CREATED_AT,
+          updatedAt: UPDATED_AT,
+          role: 'viewer',
+        },
+      ]);
     });
   });
 

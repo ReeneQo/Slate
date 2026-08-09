@@ -1,4 +1,4 @@
-import type { BoardEntity } from '../entities/board.entity';
+import type { AccessibleBoardEntity, BoardEntity } from '../entities/board.entity';
 
 /**
  * Форма доски, уходящая на фронт. Отдельный тип, а не Prisma-модель: форма ответа — контракт
@@ -34,4 +34,22 @@ export function toBoardDto(board: BoardEntity): BoardDto {
     createdAt: board.createdAt,
     updatedAt: board.updatedAt,
   };
+}
+
+/**
+ * Доска в `GET /boards` (SLT-42) — `BoardDto` плюс `role`: уровень доступа ИМЕННО текущего
+ * пользователя к этой доске (`owner` | `editor` | `viewer`). Список теперь owned ∪ shared, и без
+ * роли клиент не смог бы отличить «моя» доску от «расшаренной со мной» (SLT-43 понадобится это
+ * для роль-гейта на UI).
+ *
+ * `extends BoardDto`, маппер переиспользует `toBoardDto` — тот же приём, что у
+ * `ElementListItemDto`/`toElementListItemDto`: расширение контракта, а не копия перечисления
+ * полей.
+ */
+export interface BoardListItemDto extends BoardDto {
+  role: AccessibleBoardEntity['role'];
+}
+
+export function toBoardListItemDto(board: AccessibleBoardEntity): BoardListItemDto {
+  return { ...toBoardDto(board), role: board.role };
 }

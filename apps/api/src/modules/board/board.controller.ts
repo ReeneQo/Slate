@@ -15,7 +15,7 @@ import { Authorization } from '../../shared/decorators/authorization.decorator';
 import { Authorized } from '../../shared/decorators/authorized.decorator';
 import type { ElementListItemDto } from '../element/dto/element.dto';
 import { BoardService } from './board.service';
-import type { BoardDto } from './dto/board.dto';
+import type { BoardDto, BoardListItemDto } from './dto/board.dto';
 import { CreateBoardDto } from './dto/create-board.dto';
 import { UpdateBoardDto } from './dto/update-board.dto';
 
@@ -54,9 +54,10 @@ export class BoardController {
     return this.boardService.create(userId, dto);
   }
 
+  /** owned ∪ shared (SLT-42): каждая доска несёт роль текущего пользователя. */
   @Get()
-  findAll(@Authorized('id') userId: string): Promise<BoardDto[]> {
-    return this.boardService.findAllOwned(userId);
+  findAll(@Authorized('id') userId: string): Promise<BoardListItemDto[]> {
+    return this.boardService.findAllAccessible(userId);
   }
 
   @Get(':id')

@@ -65,7 +65,9 @@ function createElementEntity(overrides: Partial<ElementEntity> = {}): ElementEnt
  */
 function createDependencies() {
   const create = jest.fn() as jest.MockedFunction<BoardRepository['create']>;
-  const findAllOwnedBy = jest.fn() as jest.MockedFunction<BoardRepository['findAllOwnedBy']>;
+  const findAllAccessibleBy = jest.fn() as jest.MockedFunction<
+    BoardRepository['findAllAccessibleBy']
+  >;
   const findAccessible = jest.fn() as jest.MockedFunction<BoardRepository['findAccessible']>;
   const getAccessLevel = jest.fn() as jest.MockedFunction<BoardRepository['getAccessLevel']>;
   const findElements = jest.fn() as jest.MockedFunction<BoardRepository['findElements']>;
@@ -74,7 +76,7 @@ function createDependencies() {
 
   const boardRepository = {
     create,
-    findAllOwnedBy,
+    findAllAccessibleBy,
     findAccessible,
     getAccessLevel,
     findElements,
@@ -85,7 +87,7 @@ function createDependencies() {
   return {
     boardService: new BoardService(boardRepository as unknown as BoardRepository),
     create,
-    findAllOwnedBy,
+    findAllAccessibleBy,
     findAccessible,
     getAccessLevel,
     findElements,
@@ -143,23 +145,31 @@ describe('BoardService', () => {
     });
   });
 
-  describe('findAllOwned', () => {
-    it('спрашивает только доски автора сессии', async () => {
-      const { boardService, findAllOwnedBy } = createDependencies();
-      findAllOwnedBy.mockResolvedValue([createBoardEntity()]);
+  describe('findAllAccessible', () => {
+    it('спрашивает owned ∪ shared доски пользователя сессии и прокидывает роль', async () => {
+      const { boardService, findAllAccessibleBy } = createDependencies();
+      findAllAccessibleBy.mockResolvedValue([{ ...createBoardEntity(), role: 'owner' }]);
 
-      const result = await boardService.findAllOwned(USER_ID);
+      const result = await boardService.findAllAccessible(USER_ID);
 
-      // Единственный аргумент выборки — id из сессии: другого источника владения у списка нет.
-      expect(findAllOwnedBy).toHaveBeenCalledWith(USER_ID);
-      expect(result).toEqual([expectedBoardDto]);
+      expect(findAllAccessibleBy).toHaveBeenCalledWith(USER_ID);
+      expect(result).toEqual([{ ...expectedBoardDto, role: 'owner' }]);
+    });
+
+    it('отдаёт роль участника (editor/viewer) для расшаренных досок', async () => {
+      const { boardService, findAllAccessibleBy } = createDependencies();
+      findAllAccessibleBy.mockResolvedValue([{ ...createBoardEntity(), role: 'viewer' }]);
+
+      const result = await boardService.findAllAccessible(USER_ID);
+
+      expect(result).toEqual([{ ...expectedBoardDto, role: 'viewer' }]);
     });
 
     it('на пустой список отдаёт пустой массив, а не ошибку', async () => {
-      const { boardService, findAllOwnedBy } = createDependencies();
-      findAllOwnedBy.mockResolvedValue([]);
+      const { boardService, findAllAccessibleBy } = createDependencies();
+      findAllAccessibleBy.mockResolvedValue([]);
 
-      await expect(boardService.findAllOwned(USER_ID)).resolves.toEqual([]);
+      await expect(boardService.findAllAccessible(USER_ID)).resolves.toEqual([]);
     });
   });
 
