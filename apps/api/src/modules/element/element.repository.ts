@@ -3,6 +3,7 @@ import { type ElementType, Prisma } from '@slate/database';
 import type { ElementData } from '@slate/shared-types';
 
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { accessibleBoardScope, type AccessLevel, resolveAccessLevel } from '../board/board.access';
 import { accessibleElementScope } from './element.access';
 import { ELEMENT_SELECT, type ElementEntity, LIVE_ELEMENT_WHERE } from './entities/element.entity';
 
@@ -148,6 +149,38 @@ export class ElementRepository {
       where: { ...accessibleElementScope(elementId, userId), ...LIVE_ELEMENT_WHERE },
       select: ELEMENT_SELECT,
     });
+  }
+
+  /**
+   * Уровень доступа пользователя к ДОСКЕ этого элемента (SLT-41) — без чтения самого элемента.
+   *
+   * Нужен ElementService перед PATCH/DELETE существующего элемента: в отличие от вставки
+   * (`BoardService.getAccess(boardId, ...)`, boardId уже известен из тела запроса), здесь
+   * известен только `elementId` — сначала нужно дойти до доски ЧЕРЕЗ элемент. Один запрос
+   * решает и это, и саму проверку доступа разом: `board` в select читает `ownerId` и роль
+   * участника (если он есть) прямо через связь, без отдельного похода за `boardId` и
+   * последующего `BoardService.getAccess`.
+   *
+   * `resolveAccessLevel` — ТА ЖЕ функция, что использует `BoardRepository.getAccessLevel`
+   * (board.access.ts): единственное определение «как читать owner+members в уровень», применённое
+   * к другому корню запроса (элемент → доска), а не вторая независимая реализация того же правила.
+   *
+   * `LIVE_ELEMENT_WHERE` — как и у `findAccessible`: мягко удалённый элемент недоступен для
+   * PATCH/DELETE (это относится и к проверке роли перед ними). Путь воскрешения (PUT) роль
+   * проверяет иначе — через `BoardService.getAccess(existing.boardId, ...)` в ElementService,
+   * т.к. `findInvariantsIncludingDeleted` уже даёт `boardId` вне зависимости от `deletedAt`.
+   */
+  async getAccessLevel(elementId: string, userId: string): Promise<AccessLevel> {
+    const element = await this.prisma.element.findFirst({
+      where: { id: elementId, ...LIVE_ELEMENT_WHERE, board: accessibleBoardScope(userId) },
+      select: {
+        board: {
+          select: { ownerId: true, members: { where: { userId }, select: { role: true } } },
+        },
+      },
+    });
+
+    return resolveAccessLevel(element?.board ?? null, userId);
   }
 
   /**

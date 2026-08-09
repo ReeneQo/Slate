@@ -7,7 +7,8 @@ import {
 import type { ElementType } from '@slate/database';
 import { type ElementData, parseElementData, type PatchElementInput } from '@slate/shared-types';
 
-import { boardNotFound, BoardService } from '../board/board.service';
+import { canWrite } from '../board/board.access';
+import { boardNotFound, BoardService, forbiddenWrite } from '../board/board.service';
 import { type ElementDto, toElementDto } from './dto/element.dto';
 import type { PatchElementDto } from './dto/patch-element.dto';
 import type { UpsertElementDto } from './dto/upsert-element.dto';
@@ -32,10 +33,16 @@ export interface UpsertElementResult {
  * Исход версионированного PATCH (SLT-38, `ElementService.patchVersioned`). Формой похож на
  * `CreateElementOutcome` репозитория: конечный набор случаев решает вызывающий, а не try/catch
  * по HTTP-исключениям — реалтайм-слой их не бросает (см. докстринг `patchVersioned`).
+ *
+ * `forbidden` (SLT-41) — доступ к доске есть, но роль `viewer`: пишет только `editor`/`owner`
+ * (см. `canWrite`, board.access.ts). Отдельный от `not_found` случай осознанно: viewer не
+ * посторонний — доска ему видна на чтение, и подменять недостаточность роли на «доски нет»
+ * значило бы врать про причину отказа тому, кто и так знает, что доска существует.
  */
 export type VersionedPatchOutcome =
   | { status: 'applied'; element: ElementEntity }
   | { status: 'not_found' }
+  | { status: 'forbidden' }
   | { status: 'invalid_payload' }
   | { status: 'version_conflict'; element: ElementEntity };
 
@@ -43,6 +50,7 @@ export type VersionedPatchOutcome =
 export type VersionedRemovalOutcome =
   | { status: 'applied'; id: string; version: number }
   | { status: 'not_found' }
+  | { status: 'forbidden' }
   | { status: 'version_conflict'; element: ElementEntity };
 
 /**
@@ -50,17 +58,24 @@ export type VersionedRemovalOutcome =
  * только через ElementRepository. Про `deletedAt` тоже не знает: мягкое удаление целиком
  * закрыто слоем данных, здесь оно видно лишь как слово «воскресить» в названии сценария.
  *
- * Проверка доступа устроена двумя разными способами, и разница принципиальна:
+ * Проверка ДОСТУПА (видно ли мне вообще этот элемент) устроена двумя разными способами:
  *
  * 1. Мутации СУЩЕСТВУЮЩЕГО элемента (замена, PATCH, удаление) несут scope доски прямо в своём
  *    `where` — отдельной проверки нет и быть не должно, иначе появится окно между «можно» и
  *    «пишем».
  * 2. ВСТАВКА нового элемента — единственный случай, где сузить запрос нечем: строки ещё не
- *    существует. Здесь и только здесь вызывается `boardService.assertAccessible`.
+ *    существует. Здесь доступ спрашивается заранее, через `boardService.getAccess`.
  *
- * Оба способа опираются на ОДНО определение доступа из SLT-19 (`accessibleBoardScope`), а не на
- * две независимые проверки: шеринг этапа 3 добавит ветку в одном месте, и элементы станут
- * доступны участникам сами собой.
+ * Оба способа опираются на ОДНО определение доступа (`accessibleBoardScope`/`accessibleElementScope`,
+ * SLT-19, расширено SLT-41), а не на две независимые проверки.
+ *
+ * Проверка РОЛИ (SLT-41: хватает ли её, чтобы ПИСАТЬ) — поверх этого, отдельным шагом, и только
+ * там, где операция — запись: `createElement`/replace-ветка `upsertEntity` зовут
+ * `boardService.getAccess`+`canWrite` (boardId уже под рукой), `patch`/`remove` — через
+ * `assertCanWriteElement` (elementId под рукой, boardId ещё нет), `patchVersioned`/`removeVersioned` —
+ * тот же `elementRepository.getAccessLevel`+`canWrite`, но без исключений (см. их докстринги).
+ * Читающие сценарии (`findAccessible`, geometry-чтения) роль не спрашивают вовсе — viewer читает
+ * наравне с editor'ом.
  */
 @Injectable()
 export class ElementService {
@@ -123,8 +138,22 @@ export class ElementService {
       return this.createElement(elementId, userId, dto.boardId, shape);
     }
 
-    // Дальше — ветка замены, и здесь действуют инварианты элемента. Оба сравнения бесплатны:
-    // строка уже прочитана тем же запросом, который решил «создавать или заменять».
+    // Ветка замены — а замена (и воскрешение) есть ЗАПИСЬ, значит нужна роль ≥ editor (SLT-41),
+    // не просто доступ. `existing` найден под accessibleElementScope (viewer тоже проходит,
+    // scope читательский), поэтому здесь нужна ОТДЕЛЬНАЯ проверка роли — `findInvariantsIncludingDeleted`
+    // её не даёт. `boardService.getAccess`, а не `elementRepository.getAccessLevel`: у нас уже есть
+    // `existing.boardId` из этого же чтения, второй поход через элемент был бы лишним.
+    const access = await this.boardService.getAccess(existing.boardId, userId);
+
+    if (!canWrite(access)) {
+      // access === null теоретически недостижимо (existing уже прошёл accessibleElementScope на
+      // той же доске), но это не тот инвариант, на который стоит полагаться молча — на границе
+      // ролевой проверки отказ формулируется явно, а не оставляется падать на undefined.
+      throw access === null ? elementNotFound() : forbiddenWrite();
+    }
+
+    // Дальше — инварианты элемента. Оба сравнения бесплатны: строка уже прочитана тем же
+    // запросом, который решил «создавать или заменять».
 
     // Элемент есть, но лежит на ДРУГОЙ моей доске. Перемещение между досками не реализуем
     // (граница SLT-20), а молча записать его в присланную доску нельзя — это и было бы
@@ -156,8 +185,8 @@ export class ElementService {
    * `patch`, плюс оптимистическая блокировка — и, в отличие от `patch`, отдаёт ИСХОД, а не
    * бросает HTTP-исключения. Реалтайм-слой не работает с NestJS-статусами: отказ едет назад
    * ack-callback'ом с доменной причиной (см. RealtimeGateway/ElementSyncService), а не как
-   * `NotFoundException`/`BadRequestException` — тот же принцип, что развёл `assertAccessible` и
-   * `canAccess` у доски.
+   * `NotFoundException`/`BadRequestException` — тот же принцип, что развёл бросающие HTTP-хелперы
+   * и транспорт-нейтральный `boardService.getAccess` у доски.
    *
    * `version_conflict` несёт АКТУАЛЬНЫЙ элемент — не потому что репозиторий его вернул (при
    * несовпадении version `patchAccessibleVersioned` отдаёт `null`, теряя строку), а отдельным
@@ -176,6 +205,18 @@ export class ElementService {
 
     if (!hasGeometryChange && !hasAnyChange(patchChanges)) {
       return { status: 'invalid_payload' };
+    }
+
+    // Роль ≥ editor (SLT-41) — до любого чтения/записи геометрии: viewer'у нет смысла тратить
+    // ещё один round-trip на данные, которые он всё равно не сможет записать.
+    const access = await this.elementRepository.getAccessLevel(elementId, userId);
+
+    if (access === null) {
+      return { status: 'not_found' };
+    }
+
+    if (!canWrite(access)) {
+      return { status: 'forbidden' };
     }
 
     let geometry: ElementData | undefined;
@@ -224,6 +265,17 @@ export class ElementService {
     userId: string,
     expectedVersion: number,
   ): Promise<VersionedRemovalOutcome> {
+    // Роль ≥ editor (SLT-41) — та же проверка и в том же месте, что у patchVersioned.
+    const access = await this.elementRepository.getAccessLevel(elementId, userId);
+
+    if (access === null) {
+      return { status: 'not_found' };
+    }
+
+    if (!canWrite(access)) {
+      return { status: 'forbidden' };
+    }
+
     const removed = await this.elementRepository.softDeleteAccessibleVersioned(
       elementId,
       userId,
@@ -260,6 +312,10 @@ export class ElementService {
       throw emptyPatch();
     }
 
+    // Роль ≥ editor (SLT-41): PATCH — запись, `patchAccessible` ниже проверяет лишь ДОСТУП
+    // (scope расширен до owner ∪ любой member), а не роль — её проверяет этот хелпер.
+    await this.assertCanWriteElement(elementId, userId);
+
     const geometry = hasGeometryChange
       ? await this.parseStoredData(elementId, userId, dto.data)
       : undefined;
@@ -287,6 +343,9 @@ export class ElementService {
    * @throws {NotFoundException} элемент недоступен, не существует или уже удалён
    */
   async remove(elementId: string, userId: string): Promise<void> {
+    // Роль ≥ editor (SLT-41) — см. `assertCanWriteElement` и её докстринг.
+    await this.assertCanWriteElement(elementId, userId);
+
     const isDeleted = await this.elementRepository.softDeleteAccessible(elementId, userId);
 
     if (!isDeleted) {
@@ -295,9 +354,36 @@ export class ElementService {
   }
 
   /**
+   * Роль ≥ editor на существующем элементе, брошенная как HTTP-исключение (SLT-41) — общий
+   * write-хелпер `patch`/`remove`. Не размазан инлайн по обоим методам: правило «кто умеет
+   * писать элемент» должно жить в одном месте, а не сравниваться `access === 'viewer'` дважды.
+   *
+   * `elementNotFound()` на `access === null`, а не `forbiddenWrite()`: посторонний (не-member)
+   * не должен узнать о существовании элемента из статуса 403 — та же 404-политика, что и у
+   * `patchAccessible`/`softDeleteAccessible` ниже. `forbiddenWrite()` — только когда доступ ЕСТЬ,
+   * но роли не хватает (viewer): ему доска и элемент видны, скрывать факт существования нечем.
+   */
+  private async assertCanWriteElement(elementId: string, userId: string): Promise<void> {
+    const access = await this.elementRepository.getAccessLevel(elementId, userId);
+
+    if (access === null) {
+      throw elementNotFound();
+    }
+
+    if (!canWrite(access)) {
+      throw forbiddenWrite();
+    }
+  }
+
+  /**
    * Вставка. Доступ к доске проверяется ЗДЕСЬ и только здесь — см. комментарий класса.
    *
-   * `board-missing` — не дубль этой проверки, а её гонка: доску удалили между `assertAccessible`
+   * Вставка — запись, значит нужна роль ≥ editor (SLT-41), не просто доступ: `boardService.getAccess`
+   * отдаёт уровень, `canWrite` решает, хватает ли его. `access === null` (доски не видно вовсе) и
+   * `'viewer'` (видно, но нельзя писать) — РАЗНЫЕ причины и разные ответы (`boardNotFound`/
+   * `forbiddenWrite`), в отличие от «id-taken» ниже, где различать нарочно нечем.
+   *
+   * `board-missing` — не дубль этой проверки, а её гонка: доску удалили между проверкой доступа
    * и `INSERT`. Ответ — тот же 404 про доску (текст берётся из board-модуля, а не пишется
    * заново), потому что событие для клиента одно: доски, в которую он пишет, больше нет.
    *
@@ -313,7 +399,11 @@ export class ElementService {
     boardId: string,
     shape: ReplaceElementData,
   ): Promise<{ element: ElementEntity; isCreated: boolean }> {
-    await this.boardService.assertAccessible(boardId, userId);
+    const access = await this.boardService.getAccess(boardId, userId);
+
+    if (!canWrite(access)) {
+      throw access === null ? boardNotFound() : forbiddenWrite();
+    }
 
     const outcome = await this.elementRepository.create({ id: elementId, boardId, ...shape });
 

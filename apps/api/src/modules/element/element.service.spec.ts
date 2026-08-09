@@ -117,6 +117,7 @@ const expectedElementDto = {
 function createDependencies() {
   const create = jest.fn() as jest.MockedFunction<ElementRepository['create']>;
   const findAccessible = jest.fn() as jest.MockedFunction<ElementRepository['findAccessible']>;
+  const getAccessLevel = jest.fn() as jest.MockedFunction<ElementRepository['getAccessLevel']>;
   const findInvariantsIncludingDeleted = jest.fn() as jest.MockedFunction<
     ElementRepository['findInvariantsIncludingDeleted']
   >;
@@ -134,9 +135,14 @@ function createDependencies() {
     ElementRepository['softDeleteAccessibleVersioned']
   >;
 
+  // По умолчанию — owner: большинству тестов доступ и роль не интересны, их интересует
+  // остальное поведение. Тесты про SLT-41 переопределяют это явно (editor/viewer/null).
+  getAccessLevel.mockResolvedValue('owner');
+
   const elementRepository = {
     create,
     findAccessible,
+    getAccessLevel,
     findInvariantsIncludingDeleted,
     replaceAccessible,
     patchAccessible,
@@ -145,10 +151,10 @@ function createDependencies() {
     softDeleteAccessibleVersioned,
   } satisfies Record<keyof ElementRepository, unknown>;
 
-  const assertAccessible = jest.fn() as jest.MockedFunction<BoardService['assertAccessible']>;
-  assertAccessible.mockResolvedValue(undefined);
+  const getAccess = jest.fn() as jest.MockedFunction<BoardService['getAccess']>;
+  getAccess.mockResolvedValue('owner');
 
-  const boardService = { assertAccessible } satisfies Pick<BoardService, 'assertAccessible'>;
+  const boardService = { getAccess } satisfies Pick<BoardService, 'getAccess'>;
 
   return {
     elementService: new ElementService(
@@ -157,13 +163,14 @@ function createDependencies() {
     ),
     create,
     findAccessible,
+    getAccessLevel,
     findInvariantsIncludingDeleted,
     replaceAccessible,
     patchAccessible,
     softDeleteAccessible,
     patchAccessibleVersioned,
     softDeleteAccessibleVersioned,
-    assertAccessible,
+    getAccess,
   };
 }
 
@@ -187,18 +194,33 @@ describe('ElementService', () => {
     });
 
     it('перед вставкой проверяет доступ к доске из тела', async () => {
-      const { elementService, findInvariantsIncludingDeleted, create, assertAccessible } =
+      const { elementService, findInvariantsIncludingDeleted, create, getAccess } =
         createDependencies();
       findInvariantsIncludingDeleted.mockResolvedValue(null);
       // Доска чужая: board-модуль отвечает своим 404 — тем же, что и на несуществующую доску.
-      assertAccessible.mockRejectedValue(new NotFoundException('Доска не найдена'));
+      getAccess.mockResolvedValue(null);
 
       await expect(
         elementService.upsert(ELEMENT_ID, USER_ID, createUpsertDto()),
       ).rejects.toBeInstanceOf(NotFoundException);
 
-      expect(assertAccessible).toHaveBeenCalledWith(BOARD_ID, USER_ID);
+      expect(getAccess).toHaveBeenCalledWith(BOARD_ID, USER_ID);
       // Главное: до вставки дело не дошло. Проверка не «где-то рядом», а строго перед записью.
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it('перед вставкой требует роль ≥ editor — viewer получает 403, а не 404', async () => {
+      const { elementService, findInvariantsIncludingDeleted, create, getAccess } =
+        createDependencies();
+      findInvariantsIncludingDeleted.mockResolvedValue(null);
+      // Доска видна (viewer читает), но писать в неё viewer не может (SLT-41).
+      getAccess.mockResolvedValue('viewer');
+
+      const error = await elementService
+        .upsert(ELEMENT_ID, USER_ID, createUpsertDto())
+        .catch((reason: unknown) => reason);
+
+      expect(error).toBeInstanceOf(ForbiddenException);
       expect(create).not.toHaveBeenCalled();
     });
 
@@ -223,7 +245,7 @@ describe('ElementService', () => {
     it('на исчезнувшую в процессе доску отвечает 404 про доску, а не про элемент', async () => {
       const { elementService, findInvariantsIncludingDeleted, create } = createDependencies();
       findInvariantsIncludingDeleted.mockResolvedValue(null);
-      // Гонка: доску удалили между assertAccessible и INSERT — репозиторий поймал FK.
+      // Гонка: доску удалили между проверкой доступа и INSERT — репозиторий поймал FK.
       create.mockResolvedValue({ status: 'board-missing' });
 
       await expect(elementService.upsert(ELEMENT_ID, USER_ID, createUpsertDto())).rejects.toThrow(
@@ -264,21 +286,39 @@ describe('ElementService', () => {
       expect(result.isCreated).toBe(false);
     });
 
-    it('не спрашивает доступ отдельно, когда элемент уже найден под scope', async () => {
+    it('проверяет РОЛЬ на замену через boardId уже прочитанной строки, без второго чтения элемента', async () => {
       const {
         elementService,
         findInvariantsIncludingDeleted,
         replaceAccessible,
-        assertAccessible,
+        getAccess,
+        getAccessLevel,
       } = createDependencies();
       findInvariantsIncludingDeleted.mockResolvedValue(EXISTING_INVARIANTS);
       replaceAccessible.mockResolvedValue(createElementEntity());
 
       await elementService.upsert(ELEMENT_ID, USER_ID, createUpsertDto());
 
-      // Проверка доступа вклеена в where обоих запросов. Лишний вызов был бы не только
-      // round-trip'ом, но и ложным ощущением, что защита именно в нём.
-      expect(assertAccessible).not.toHaveBeenCalled();
+      // ДОСТУП вклеен в where findInvariantsIncludingDeleted — второй раз его никто не спрашивает.
+      // РОЛЬ (SLT-41) проверяется через boardService.getAccess(existing.boardId, ...) — boardId уже
+      // известен из этого же чтения, поэтому `elementRepository.getAccessLevel` (который решал бы
+      // ту же задачу ценой ЕЩЁ одного похода в БД за элементом) здесь не нужен и не вызывается.
+      expect(getAccess).toHaveBeenCalledWith(BOARD_ID, USER_ID);
+      expect(getAccessLevel).not.toHaveBeenCalled();
+    });
+
+    it('отказывает viewer в замене/воскрешении существующего элемента: 403, не 404', async () => {
+      const { elementService, findInvariantsIncludingDeleted, replaceAccessible, getAccess } =
+        createDependencies();
+      findInvariantsIncludingDeleted.mockResolvedValue(EXISTING_INVARIANTS);
+      getAccess.mockResolvedValue('viewer');
+
+      const error = await elementService
+        .upsert(ELEMENT_ID, USER_ID, createUpsertDto())
+        .catch((reason: unknown) => reason);
+
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect(replaceAccessible).not.toHaveBeenCalled();
     });
 
     it('отказывается переносить элемент на другую доску', async () => {
@@ -524,6 +564,32 @@ describe('ElementService', () => {
       expect(error).not.toBeInstanceOf(ForbiddenException);
       expect((error as NotFoundException).message).toBe('Элемент не найден');
     });
+
+    it('viewer получает 403, а не 404 — доска ему видна, писать нельзя (SLT-41)', async () => {
+      const { elementService, patchAccessible, getAccessLevel } = createDependencies();
+      getAccessLevel.mockResolvedValue('viewer');
+
+      const error = await elementService
+        .patch(ELEMENT_ID, USER_ID, { x: 1 })
+        .catch((reason: unknown) => reason);
+
+      expect(error).toBeInstanceOf(ForbiddenException);
+      // Отказ — до записи: viewer не должен успеть тронуть данные, даже если бы patchAccessible
+      // почему-то нашёл строку.
+      expect(patchAccessible).not.toHaveBeenCalled();
+    });
+
+    it('на элемент вне scope (посторонний) отвечает 404, не спрашивая patchAccessible', async () => {
+      const { elementService, patchAccessible, getAccessLevel } = createDependencies();
+      getAccessLevel.mockResolvedValue(null);
+
+      const error = await elementService
+        .patch(ELEMENT_ID, USER_ID, { x: 1 })
+        .catch((reason: unknown) => reason);
+
+      expect(error).toBeInstanceOf(NotFoundException);
+      expect(patchAccessible).not.toHaveBeenCalled();
+    });
   });
 
   describe('remove', () => {
@@ -546,6 +612,26 @@ describe('ElementService', () => {
       expect(error).toBeInstanceOf(NotFoundException);
       expect(error).not.toBeInstanceOf(ForbiddenException);
       expect((error as NotFoundException).message).toBe('Элемент не найден');
+    });
+
+    it('viewer получает 403, а не 404 (SLT-41)', async () => {
+      const { elementService, softDeleteAccessible, getAccessLevel } = createDependencies();
+      getAccessLevel.mockResolvedValue('viewer');
+
+      const error = await elementService
+        .remove(ELEMENT_ID, USER_ID)
+        .catch((reason: unknown) => reason);
+
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect(softDeleteAccessible).not.toHaveBeenCalled();
+    });
+
+    it('editor удаляет наравне с owner', async () => {
+      const { elementService, softDeleteAccessible, getAccessLevel } = createDependencies();
+      getAccessLevel.mockResolvedValue('editor');
+      softDeleteAccessible.mockResolvedValue(true);
+
+      await expect(elementService.remove(ELEMENT_ID, USER_ID)).resolves.toBeUndefined();
     });
   });
 
@@ -661,6 +747,40 @@ describe('ElementService', () => {
       expect(result).toEqual({ status: 'not_found' });
       expect(patchAccessibleVersioned).not.toHaveBeenCalled();
     });
+
+    it('отдаёт forbidden на роль viewer, не бросая и не трогая БД для записи (SLT-41)', async () => {
+      const { elementService, getAccessLevel, patchAccessibleVersioned, findAccessible } =
+        createDependencies();
+      getAccessLevel.mockResolvedValue('viewer');
+
+      const result = await elementService.patchVersioned(ELEMENT_ID, USER_ID, { x: 99 }, 1);
+
+      expect(result).toEqual({ status: 'forbidden' });
+      // Отказ — до геометрии и до записи: viewer не тратит лишний round-trip на данные,
+      // которые всё равно не запишет.
+      expect(findAccessible).not.toHaveBeenCalled();
+      expect(patchAccessibleVersioned).not.toHaveBeenCalled();
+    });
+
+    it('отдаёт not_found, когда посторонний вовсе не виден под elementRepository.getAccessLevel', async () => {
+      const { elementService, getAccessLevel, patchAccessibleVersioned } = createDependencies();
+      getAccessLevel.mockResolvedValue(null);
+
+      const result = await elementService.patchVersioned(ELEMENT_ID, USER_ID, { x: 99 }, 1);
+
+      expect(result).toEqual({ status: 'not_found' });
+      expect(patchAccessibleVersioned).not.toHaveBeenCalled();
+    });
+
+    it('editor проходит проверку роли и применяет изменение', async () => {
+      const { elementService, getAccessLevel, patchAccessibleVersioned } = createDependencies();
+      getAccessLevel.mockResolvedValue('editor');
+      patchAccessibleVersioned.mockResolvedValue(createElementEntity({ version: 2 }));
+
+      const result = await elementService.patchVersioned(ELEMENT_ID, USER_ID, { x: 1 }, 1);
+
+      expect(result.status).toBe('applied');
+    });
   });
 
   describe('removeVersioned (WS, SLT-38)', () => {
@@ -697,6 +817,28 @@ describe('ElementService', () => {
       const result = await elementService.removeVersioned(ELEMENT_ID, USER_ID, 1);
 
       expect(result).toEqual({ status: 'not_found' });
+    });
+
+    it('отдаёт forbidden на роль viewer, не удаляя (SLT-41)', async () => {
+      const { elementService, getAccessLevel, softDeleteAccessibleVersioned } =
+        createDependencies();
+      getAccessLevel.mockResolvedValue('viewer');
+
+      const result = await elementService.removeVersioned(ELEMENT_ID, USER_ID, 1);
+
+      expect(result).toEqual({ status: 'forbidden' });
+      expect(softDeleteAccessibleVersioned).not.toHaveBeenCalled();
+    });
+
+    it('отдаёт not_found, когда посторонний вовсе не виден под elementRepository.getAccessLevel', async () => {
+      const { elementService, getAccessLevel, softDeleteAccessibleVersioned } =
+        createDependencies();
+      getAccessLevel.mockResolvedValue(null);
+
+      const result = await elementService.removeVersioned(ELEMENT_ID, USER_ID, 1);
+
+      expect(result).toEqual({ status: 'not_found' });
+      expect(softDeleteAccessibleVersioned).not.toHaveBeenCalled();
     });
   });
 });

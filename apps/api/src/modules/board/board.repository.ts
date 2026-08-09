@@ -8,7 +8,7 @@ import {
   type ElementEntity,
   LIVE_ELEMENT_WHERE,
 } from '../element/entities/element.entity';
-import { accessibleBoardScope } from './board.access';
+import { accessibleBoardScope, type AccessLevel, resolveAccessLevel } from './board.access';
 import { BOARD_SELECT, type BoardEntity } from './entities/board.entity';
 
 /** Код Prisma для «запись под условие не найдена» (update/delete не нашли строку). */
@@ -87,28 +87,27 @@ export class BoardRepository {
   }
 
   /**
-   * Есть ли у пользователя доступ к доске — без чтения самой доски.
+   * Уровень доступа пользователя к доске — без чтения содержимого самой доски (SLT-41).
    *
-   * Это ровно та булева проверка, которую `findAccessible` выше объявляет ненужной, и
-   * исключение здесь одно, зато настоящее: ВСТАВКА элемента (SLT-20). Вклеить область
-   * видимости в `INSERT` невозможно — сужать нечего, строки ещё не существует. Значит либо
-   * спросить доступ отдельно, либо позволить клиенту писать элементы в чужую доску.
+   * Заменяет булеву `existsAccessible` (SLT-19): «есть доступ» и «какая роль» — один и тот же
+   * вопрос к БД, и раздельные `canAccess`+`getRole` заставили бы вызывающего, которому нужна
+   * роль (проверка перед мутацией), ходить в базу дважды за тем, что тут отдаётся одним
+   * запросом. `select` берёт ровно то, что нужно `resolveAccessLevel`: `ownerId` — для ветки
+   * owner, `members` (уже отфильтрованные по этому userId) — для роли участника.
    *
-   * Окно между этой проверкой и вставкой остаётся, и закрыто оно не здесь, а внешним ключом:
+   * Единственное живое исключение — ВСТАВКА элемента (SLT-20): вклеить scope в `INSERT`
+   * невозможно, строки ещё не существует, и `ElementService.createElement` спрашивает уровень
+   * здесь заранее. Окно между этой проверкой и вставкой закрыто не тут, а внешним ключом:
    * исчезни доска в этот момент, INSERT упадёт на FK, и ElementRepository переведёт это в
-   * доменный отказ. Проверка отвечает за «нельзя», целостность БД — за «уже поздно».
-   *
-   * `select: { id: true }` — из доски не читается ничего, кроме факта её существования под
-   * scope. Метаданные для ответа не нужны, а лишние байты чужих данных в памяти процесса —
-   * ровно то, чего избегает board.access.
+   * доменный отказ.
    */
-  async existsAccessible(boardId: string, userId: string): Promise<boolean> {
+  async getAccessLevel(boardId: string, userId: string): Promise<AccessLevel> {
     const board = await this.prisma.board.findFirst({
       where: { id: boardId, ...accessibleBoardScope(userId) },
-      select: { id: true },
+      select: { ownerId: true, members: { where: { userId }, select: { role: true } } },
     });
 
-    return board !== null;
+    return resolveAccessLevel(board, userId);
   }
 
   /**
@@ -148,6 +147,11 @@ export class BoardRepository {
    * Проверка доступа и запись — ОДИН запрос: `where` содержит и id, и scope (Prisma это
    * позволяет — extendedWhereUnique). Вариант «сначала findAccessible, потом update» оставил
    * бы окно между проверкой и записью.
+   *
+   * `where` — `{ id, ownerId }`, а НЕ `accessibleBoardScope(userId)` (SLT-41): переименование —
+   * управление жизненным циклом доски, а не её содержимым, и остаётся владельцу так же, как
+   * управление шерингом (SLT-42). Виджет доступа (owner ∪ member) относится к ЧТЕНИЮ и к
+   * мутациям ЭЛЕМЕНТОВ (см. докстринг `accessibleBoardScope`), не к самой доске.
    */
   async updateAccessible(
     boardId: string,
@@ -157,7 +161,7 @@ export class BoardRepository {
     try {
       // `await` внутри try обязателен: без него промис уедет наружу и catch не сработает.
       return await this.prisma.board.update({
-        where: { id: boardId, ...accessibleBoardScope(userId) },
+        where: { id: boardId, ownerId: userId },
         data: { title, version: { increment: 1 } },
         select: BOARD_SELECT,
       });
@@ -181,11 +185,14 @@ export class BoardRepository {
    *
    * `select: { id: true }` — чтобы Prisma не тянула удалённую строку целиком (её содержимое
    * никому не нужно, а в нём version).
+   *
+   * `where` — `{ id, ownerId }`, не `accessibleBoardScope` — та же причина, что у
+   * `updateAccessible`: удаление доски владельцем-only, editor этого не может.
    */
   async deleteAccessible(boardId: string, userId: string): Promise<boolean> {
     try {
       await this.prisma.board.delete({
-        where: { id: boardId, ...accessibleBoardScope(userId) },
+        where: { id: boardId, ownerId: userId },
         select: { id: true },
       });
 

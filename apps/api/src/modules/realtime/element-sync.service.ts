@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -138,6 +139,8 @@ export class ElementSyncService {
         };
       case 'not_found':
         return { ok: false, reason: 'not_found' };
+      case 'forbidden':
+        return { ok: false, reason: 'forbidden' };
       case 'invalid_payload':
         return { ok: false, reason: 'invalid_payload' };
     }
@@ -177,15 +180,21 @@ export class ElementSyncService {
         };
       case 'not_found':
         return { ok: false, reason: 'not_found' };
+      case 'forbidden':
+        return { ok: false, reason: 'forbidden' };
     }
   }
 }
 
 /**
- * HTTP-исключения `ElementService.upsertEntity` (тот же код, что у PUT, SLT-20) → доменная
+ * HTTP-исключения `ElementService.upsertEntity` (тот же код, что у PUT, SLT-20/41) → доменная
  * причина ack'а. `ConflictException` покрывает ОБА 409-случая upsert'а (id занят другой доской,
  * смена типа существующего элемента) — они и на HTTP делят один текст по той же причине (см.
  * `elementIdTaken`/`elementTypeChanged`): различать их снаружи нечем и не нужно.
+ *
+ * `ForbiddenException` (SLT-41) — `forbiddenWrite()` из board-модуля: сокет в комнате (иначе
+ * `isInBoardRoom` отклонил бы раньше, до вызова `upsertEntity` вообще), но роль `viewer` —
+ * создавать/заменять/воскрешать элемент не может.
  */
 function mapUpsertRejectReason(
   error: unknown,
@@ -196,6 +205,10 @@ function mapUpsertRejectReason(
 
   if (error instanceof NotFoundException) {
     return 'not_found';
+  }
+
+  if (error instanceof ForbiddenException) {
+    return 'forbidden';
   }
 
   if (error instanceof BadRequestException) {

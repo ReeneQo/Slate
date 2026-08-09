@@ -67,7 +67,7 @@ function createDependencies() {
   const create = jest.fn() as jest.MockedFunction<BoardRepository['create']>;
   const findAllOwnedBy = jest.fn() as jest.MockedFunction<BoardRepository['findAllOwnedBy']>;
   const findAccessible = jest.fn() as jest.MockedFunction<BoardRepository['findAccessible']>;
-  const existsAccessible = jest.fn() as jest.MockedFunction<BoardRepository['existsAccessible']>;
+  const getAccessLevel = jest.fn() as jest.MockedFunction<BoardRepository['getAccessLevel']>;
   const findElements = jest.fn() as jest.MockedFunction<BoardRepository['findElements']>;
   const updateAccessible = jest.fn() as jest.MockedFunction<BoardRepository['updateAccessible']>;
   const deleteAccessible = jest.fn() as jest.MockedFunction<BoardRepository['deleteAccessible']>;
@@ -76,7 +76,7 @@ function createDependencies() {
     create,
     findAllOwnedBy,
     findAccessible,
-    existsAccessible,
+    getAccessLevel,
     findElements,
     updateAccessible,
     deleteAccessible,
@@ -87,7 +87,7 @@ function createDependencies() {
     create,
     findAllOwnedBy,
     findAccessible,
-    existsAccessible,
+    getAccessLevel,
     findElements,
     updateAccessible,
     deleteAccessible,
@@ -201,49 +201,38 @@ describe('BoardService', () => {
     });
   });
 
-  describe('assertAccessible', () => {
-    it('молча пропускает владельца', async () => {
-      const { boardService, existsAccessible } = createDependencies();
-      existsAccessible.mockResolvedValue(true);
+  describe('getAccess', () => {
+    // Единая точка доступа (SLT-19, расширена SLT-41): транспорт-нейтральное ядро, которым
+    // пользуются и HTTP-хелперы (boardNotFound/forbiddenWrite в вызывающих), и WS-join
+    // (BoardRoomService), и ElementService. Сама она ничего не бросает — просто пробрасывает
+    // уровень из репозитория.
+    it('владельцу отдаёт owner', async () => {
+      const { boardService, getAccessLevel } = createDependencies();
+      getAccessLevel.mockResolvedValue('owner');
 
-      await expect(boardService.assertAccessible(BOARD_ID, USER_ID)).resolves.toBeUndefined();
-      expect(existsAccessible).toHaveBeenCalledWith(BOARD_ID, USER_ID);
+      await expect(boardService.getAccess(BOARD_ID, USER_ID)).resolves.toBe('owner');
+      expect(getAccessLevel).toHaveBeenCalledWith(BOARD_ID, USER_ID);
     });
 
-    it('на чужую доску отвечает тем же 404 и тем же текстом, что и остальные сценарии', async () => {
-      const { boardService, existsAccessible } = createDependencies();
-      existsAccessible.mockResolvedValue(false);
+    it('участнику-editor отдаёт editor', async () => {
+      const { boardService, getAccessLevel } = createDependencies();
+      getAccessLevel.mockResolvedValue('editor');
 
-      // Вход для element-модуля (SLT-20): вставка элемента в чужую доску обязана выглядеть
-      // ровно как обращение к несуществующей. Отдельная формулировка здесь выдала бы, что
-      // доска существует, — то самое, что скрывает единый 404.
-      const error = await boardService
-        .assertAccessible(BOARD_ID, USER_ID)
-        .catch((reason: unknown) => reason);
-
-      expect(error).toBeInstanceOf(NotFoundException);
-      expect(error).not.toBeInstanceOf(ForbiddenException);
-      expect((error as NotFoundException).message).toBe('Доска не найдена');
-    });
-  });
-
-  describe('canAccess', () => {
-    // Булев сосед assertAccessible для не-HTTP вызывающих (ws-комнаты, SLT-33): то же ядро
-    // existsAccessible, но «да/нет» вместо исключения. Проверяем ровно проброс результата — без
-    // NotFoundException, которому в реалтайме не место.
-    it('возвращает true, когда доска доступна пользователю', async () => {
-      const { boardService, existsAccessible } = createDependencies();
-      existsAccessible.mockResolvedValue(true);
-
-      await expect(boardService.canAccess(BOARD_ID, USER_ID)).resolves.toBe(true);
-      expect(existsAccessible).toHaveBeenCalledWith(BOARD_ID, USER_ID);
+      await expect(boardService.getAccess(BOARD_ID, USER_ID)).resolves.toBe('editor');
     });
 
-    it('возвращает false на чужую или несуществующую доску, не бросая', async () => {
-      const { boardService, existsAccessible } = createDependencies();
-      existsAccessible.mockResolvedValue(false);
+    it('участнику-viewer отдаёт viewer', async () => {
+      const { boardService, getAccessLevel } = createDependencies();
+      getAccessLevel.mockResolvedValue('viewer');
 
-      await expect(boardService.canAccess(BOARD_ID, USER_ID)).resolves.toBe(false);
+      await expect(boardService.getAccess(BOARD_ID, USER_ID)).resolves.toBe('viewer');
+    });
+
+    it('на чужую или несуществующую доску отдаёт null, не бросая', async () => {
+      const { boardService, getAccessLevel } = createDependencies();
+      getAccessLevel.mockResolvedValue(null);
+
+      await expect(boardService.getAccess(BOARD_ID, USER_ID)).resolves.toBeNull();
     });
   });
 

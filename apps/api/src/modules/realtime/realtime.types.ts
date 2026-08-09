@@ -272,8 +272,12 @@ export const elementDeletePayloadSchema = z.object({
 });
 
 /**
- * Причина отказа мутации, различимая в ack (SLT-38):
- *  - `access_denied` — сокет не в комнате доски из payload'а;
+ * Причина отказа мутации, различимая в ack (SLT-38, дополнено SLT-41):
+ *  - `access_denied` — сокет не в комнате доски из payload'а (комната есть у ЛЮБОЙ роли,
+ *    включая viewer, — этот отказ значит «не входил» / «доски не видно вовсе», не «роли мало»);
+ *  - `forbidden` — сокет В КОМНАТЕ (доступ есть), но роль `viewer`: писать может только
+ *    `editor`/`owner` (SLT-41, `canWrite`). Отдельно от `access_denied`: там доски не видно
+ *    вовсе, здесь она видна на чтение — разные причины, разная реакция клиента;
  *  - `not_found` — элемент недоступен/не существует/удалён (update/delete) или доска исчезла
  *    между проверкой и записью (create, симметрично HTTP board-missing);
  *  - `version_conflict` — update/delete: ожидаемая version устарела (несёт актуальный элемент);
@@ -283,6 +287,7 @@ export const elementDeletePayloadSchema = z.object({
  */
 export type ElementMutationRejectReason =
   | 'access_denied'
+  | 'forbidden'
   | 'not_found'
   | 'version_conflict'
   | 'conflict'

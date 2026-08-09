@@ -1,3 +1,4 @@
+import type { BoardMemberRole } from '@slate/database';
 import {
   boardListResponseSchema,
   type BoardResponse,
@@ -148,6 +149,25 @@ export async function createBoard(
   // Разбор схемой прямо в фикстуре: доски создаются почти в каждом сценарии, так что контракт
   // ответа проверяется десятки раз без единой строчки в самих тестах.
   return parseBoardResponse(response.body);
+}
+
+/**
+ * Заводит участника доски НАПРЯМУЮ через Prisma, минуя API (SLT-41: share CRUD — SLT-42, его
+ * ещё нет). Единственный законный способ создать member в e2e на этом этапе: тесты доступа не
+ * ждут появления `POST /boards/:id/members`, а вставляют строку сами — SLT-41 читает
+ * `BoardMember`, но не пишет её ничем, кроме этого.
+ *
+ * Не через `createBoard`/HTTP, потому что вставлять ЗДЕСЬ через Prisma — не то же самое, что
+ * готовить данные для ЧТЕНИЯ (см. докстринг модуля): вставка через прямой INSERT — единственно
+ * возможный путь, а не сокращение honest-пути, которого попросту не существует.
+ */
+export async function addBoardMember(
+  testApp: TestApp,
+  boardId: string,
+  userId: string,
+  role: BoardMemberRole,
+): Promise<void> {
+  await testApp.prisma.boardMember.create({ data: { boardId, userId, role } });
 }
 
 /**

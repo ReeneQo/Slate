@@ -10,13 +10,23 @@ const BOARD_ID = '019fa5b1-0000-7000-8000-000000000001';
 const TITLE = 'Sprint board';
 
 /**
- * Ожидаемая область видимости запроса к КОНКРЕТНОЙ доске.
+ * Ожидаемая область видимости ЧТЕНИЯ конкретной доски (owner ∪ участник любой роли, SLT-41).
  *
  * Форма выписана здесь буквально, а не взята вызовом `accessibleBoardScope(USER_ID)`. Иначе
  * тест повторял бы реализацию и остался бы зелёным при любой её правке — включая ту, что
  * открывает доступ ко всем доскам. Проверка доступа должна быть зафиксирована независимо.
  */
-const ACCESS_SCOPED_WHERE = { id: BOARD_ID, OR: [{ ownerId: USER_ID }] };
+const ACCESS_SCOPED_WHERE = {
+  id: BOARD_ID,
+  OR: [{ ownerId: USER_ID }, { members: { some: { userId: USER_ID } } }],
+};
+
+/**
+ * Область видимости ЗАПИСИ самой доски (переименование/удаление) — только владелец (SLT-41):
+ * управление жизненным циклом доски editor'у не передаётся, в отличие от чтения и мутаций
+ * элементов.
+ */
+const OWNER_ONLY_WHERE = { id: BOARD_ID, ownerId: USER_ID };
 
 /**
  * Узкие сигнатуры вместо настоящих делегатов Prisma.
@@ -135,26 +145,41 @@ describe('BoardRepository', () => {
     });
   });
 
-  describe('existsAccessible', () => {
-    it('спрашивает только факт существования под тем же access-scope', async () => {
+  describe('getAccessLevel', () => {
+    const SELECT_SHAPE = {
+      where: ACCESS_SCOPED_WHERE,
+      select: { ownerId: true, members: { where: { userId: USER_ID }, select: { role: true } } },
+    };
+
+    it('владельцу отдаёт owner, не заглядывая в members', async () => {
       const { boardRepository, findFirst } = createDependencies();
-      findFirst.mockResolvedValue({ id: BOARD_ID });
+      findFirst.mockResolvedValue({ ownerId: USER_ID, members: [] });
 
-      await expect(boardRepository.existsAccessible(BOARD_ID, USER_ID)).resolves.toBe(true);
+      await expect(boardRepository.getAccessLevel(BOARD_ID, USER_ID)).resolves.toBe('owner');
 
-      // Ровно тот же where, что у findAccessible: проверка доступа одна на модуль. select сужен
-      // до id — метаданные доски для ответа «можно» не нужны.
-      expect(findFirst).toHaveBeenCalledWith({
-        where: ACCESS_SCOPED_WHERE,
-        select: { id: true },
-      });
+      // Тот же access-scope, что и у findAccessible: единая точка доступа не заводит второй where.
+      expect(findFirst).toHaveBeenCalledWith(SELECT_SHAPE);
     });
 
-    it('на чужую или отсутствующую доску возвращает false', async () => {
+    it('участнику с ролью editor отдаёт editor', async () => {
+      const { boardRepository, findFirst } = createDependencies();
+      findFirst.mockResolvedValue({ ownerId: 'someone-else', members: [{ role: 'editor' }] });
+
+      await expect(boardRepository.getAccessLevel(BOARD_ID, USER_ID)).resolves.toBe('editor');
+    });
+
+    it('участнику с ролью viewer отдаёт viewer', async () => {
+      const { boardRepository, findFirst } = createDependencies();
+      findFirst.mockResolvedValue({ ownerId: 'someone-else', members: [{ role: 'viewer' }] });
+
+      await expect(boardRepository.getAccessLevel(BOARD_ID, USER_ID)).resolves.toBe('viewer');
+    });
+
+    it('постороннему или на несуществующую доску отдаёт null', async () => {
       const { boardRepository, findFirst } = createDependencies();
       findFirst.mockResolvedValue(null);
 
-      await expect(boardRepository.existsAccessible(BOARD_ID, USER_ID)).resolves.toBe(false);
+      await expect(boardRepository.getAccessLevel(BOARD_ID, USER_ID)).resolves.toBeNull();
     });
   });
 
@@ -192,7 +217,7 @@ describe('BoardRepository', () => {
   });
 
   describe('updateAccessible', () => {
-    it('инкрементит version атомарно и под тем же access-scope', async () => {
+    it('инкрементит version атомарно и ТОЛЬКО под владельцем (SLT-41: editor переименовать не может)', async () => {
       const { boardRepository, update } = createDependencies();
       update.mockResolvedValue({});
 
@@ -201,8 +226,11 @@ describe('BoardRepository', () => {
       // `{ increment: 1 }`, а не `version: value + 1`: инкремент считает БД. Прочитать-прибавить-
       // записать потеряло бы ревизию при двух параллельных PATCH'ах, а на этот счётчик будет
       // опираться оптимистическая блокировка этапа 3.
+      //
+      // `where` — owner-only (`{ id, ownerId }`), НЕ ACCESS_SCOPED_WHERE: управление жизненным
+      // циклом доски не входит в полномочия editor'а (SLT-41), в отличие от чтения и элементов.
       expect(update).toHaveBeenCalledWith({
-        where: ACCESS_SCOPED_WHERE,
+        where: OWNER_ONLY_WHERE,
         data: { title: 'Renamed', version: { increment: 1 } },
         select: BOARD_SELECT,
       });
@@ -231,7 +259,7 @@ describe('BoardRepository', () => {
   });
 
   describe('deleteAccessible', () => {
-    it('удаляет под access-scope и полагается на каскад БД', async () => {
+    it('удаляет ТОЛЬКО у владельца (SLT-41) и полагается на каскад БД', async () => {
       const { boardRepository, deleteBoard } = createDependencies();
       deleteBoard.mockResolvedValue({ id: BOARD_ID });
 
@@ -239,8 +267,11 @@ describe('BoardRepository', () => {
 
       // Элементы и участников сносит ON DELETE CASCADE (миграция 20260725144536_init) — ни
       // транзакции, ни ручного удаления детей здесь нет и быть не должно.
+      //
+      // `where` — owner-only, та же причина, что у updateAccessible: удаление доски editor'у
+      // не передаётся.
       expect(deleteBoard).toHaveBeenCalledWith({
-        where: ACCESS_SCOPED_WHERE,
+        where: OWNER_ONLY_WHERE,
         select: { id: true },
       });
     });

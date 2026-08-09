@@ -1,4 +1,5 @@
 import {
+  addBoardMember,
   boardElementsUrl,
   BOARDS_URL,
   boardUrl,
@@ -302,6 +303,77 @@ describe('Board (e2e)', () => {
       // скрывает одинаковый статус.
       expect(foreign.status).toBe(missing.status);
       expect(foreign.body).toEqual(missing.body);
+    });
+  });
+
+  describe('участники доски (SLT-41)', () => {
+    /** Member заводится напрямую через Prisma — API приглашений появится в SLT-42. */
+    it('viewer читает метаданные и содержимое чужой доски', async () => {
+      const board = await createBoard(anna.agent, 'Доска Анны');
+      await addBoardMember(testApp, board.id, boris.userId, 'viewer');
+
+      const boardResponse = await boris.agent.get(boardUrl(board.id));
+      const elementsResponse = await boris.agent.get(boardElementsUrl(board.id));
+
+      expect(boardResponse.status).toBe(200);
+      expect(boardResponse.body).toEqual(board);
+      expect(elementsResponse.status).toBe(200);
+      expect(elementsResponse.body).toEqual([]);
+    });
+
+    it('editor тоже читает доску, но переименовать/удалить её не может — жизненный цикл доски владелец-only', async () => {
+      const board = await createBoard(anna.agent, 'Доска Анны');
+      await addBoardMember(testApp, board.id, boris.userId, 'editor');
+
+      const readResponse = await boris.agent.get(boardUrl(board.id));
+      // Та же причина, что у viewer'а ниже: SLT-41 требует роль ≥ editor только для мутаций
+      // ЭЛЕМЕНТОВ (см. element.e2e-spec) — управление самой доской editor'у не передавалось.
+      const renamed = await boris.agent.patch(boardUrl(board.id)).send({ title: 'Захвачено' });
+      const deleted = await boris.agent.delete(boardUrl(board.id));
+
+      expect(readResponse.status).toBe(200);
+      expect(renamed.status).toBe(404);
+      expect(deleted.status).toBe(404);
+
+      const stored = await testApp.prisma.board.findUnique({ where: { id: board.id } });
+
+      expect(stored?.title).toBe('Доска Анны');
+    });
+
+    it('viewer тем более не может переименовать или удалить доску', async () => {
+      const board = await createBoard(anna.agent, 'Доска Анны');
+      await addBoardMember(testApp, board.id, boris.userId, 'viewer');
+
+      const renamed = await boris.agent.patch(boardUrl(board.id)).send({ title: 'Захвачено' });
+      const deleted = await boris.agent.delete(boardUrl(board.id));
+
+      expect(renamed.status).toBe(404);
+      expect(deleted.status).toBe(404);
+    });
+
+    it('посторонний по-прежнему не видит доску с чужими участниками — регресс изоляции', async () => {
+      const board = await createBoard(anna.agent, 'Доска Анны');
+      await addBoardMember(testApp, board.id, boris.userId, 'editor');
+      const carla = await signUp(testApp, {
+        email: 'carla@example.test',
+        displayName: 'Carla',
+        password: 'yet another horse',
+      });
+
+      const response = await carla.agent.get(boardUrl(board.id));
+
+      expect(response.status).toBe(404);
+    });
+
+    it('viewer не появляется в GET /boards (список остаётся owner-only, SLT-42)', async () => {
+      const board = await createBoard(anna.agent, 'Доска Анны');
+      await addBoardMember(testApp, board.id, boris.userId, 'viewer');
+
+      const response = await boris.agent.get(BOARDS_URL);
+
+      // Список "мои доски" в SLT-41 сознательно не трогается — owned ∪ shared придёт в SLT-42.
+      expect(response.body).toEqual([]);
+      expect(JSON.stringify(response.body)).not.toContain(board.id);
     });
   });
 
