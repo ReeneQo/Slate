@@ -50,7 +50,18 @@ export function configureApp(app: INestApplication): void {
   const expressApp = app.getHttpAdapter().getInstance() as Express;
   expressApp.set('trust proxy', config.app.trustProxy);
 
-  app.use(helmet());
+  // contentSecurityPolicy: false — API отдаёт только JSON (нет Swagger, нет статики), полный
+  // CSP ему нечего защищать.
+  //
+  // crossOriginResourcePolicy: false — дефолт helmet (`same-origin`) блокирует чтение ответа
+  // браузером на кросс-origin fetch НЕЗАВИСИМО от корректных CORS-заголовков (Vite dev, 5173 →
+  // API, 3000): это отдельная политика поверх CORS, а не часть его. Проверено вживую (SLT-46):
+  // curl с `Origin: http://localhost:5173` возвращал `Cross-Origin-Resource-Policy: same-origin`
+  // при валидных Access-Control-*, что в браузере рвёт запрос до того, как тело дойдёт до JS.
+  // crossOriginEmbedderPolicy трогать не пришлось — в helmet 8 он выключен по умолчанию.
+  // На ws-хендшейк helmet не влияет вовсе: engine.io перехватывает `/socket.io/*` на самом
+  // http.Server ДО Express (подтверждено — на этом пути нет ни одного helmet-заголовка).
+  app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: false }));
 
   // Session-store поднят на ОБЩЕМ ioredis-клиенте: достаём его из DI, а не создаём второй
   // коннект. ConfigService берём оттуда же, чтобы конфиг был один и тот же объект, а не

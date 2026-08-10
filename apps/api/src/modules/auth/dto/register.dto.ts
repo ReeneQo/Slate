@@ -8,6 +8,8 @@ import {
 } from '@slate/shared-types';
 import { IsEmail, IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
 
+import { Trim } from '../../../shared/decorators/trim.decorator';
+
 /**
  * Вход регистрации.
  *
@@ -28,6 +30,7 @@ export class RegisterDto implements RegisterInput {
   @IsEmail({}, { message: 'Некорректный email' })
   email!: string;
 
+  @Trim()
   @IsString()
   @IsNotEmpty({ message: 'Имя не может быть пустым' })
   @MaxLength(DISPLAY_NAME_MAX_LENGTH, {

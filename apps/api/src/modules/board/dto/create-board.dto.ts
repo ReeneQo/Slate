@@ -6,6 +6,8 @@ import {
 } from '@slate/shared-types';
 import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
+import { Trim } from '../../../shared/decorators/trim.decorator';
+
 /**
  * Вход создания доски.
  *
@@ -30,6 +32,7 @@ import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
  * `@MaxLength` и zod-схема разойтись не могут.
  */
 export class CreateBoardDto implements CreateBoardInput {
+  @Trim()
   @IsOptional()
   @IsString()
   @IsNotEmpty({ message: 'Название не может быть пустым' })

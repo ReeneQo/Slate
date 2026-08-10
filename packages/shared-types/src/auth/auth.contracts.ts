@@ -33,6 +33,7 @@ const passwordSchema = z
 
 const displayNameSchema = z
   .string()
+  .trim()
   .min(1, 'Имя не может быть пустым')
   .max(DISPLAY_NAME_MAX_LENGTH, `Имя не длиннее ${DISPLAY_NAME_MAX_LENGTH} символов`);
 
