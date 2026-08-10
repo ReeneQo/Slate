@@ -150,12 +150,16 @@ export class AuthService {
    * ниже, а маппер перечисляет поля поимённо.
    *
    * null означает, что сессия ссылается на удалённого пользователя, — это 401, а не 404:
-   * ресурс не «не найден», а предъявленные учётные данные больше не действительны.
+   * ресурс не «не найден», а предъявленные учётные данные больше не действительны. Кука в
+   * этом случае гасится тем же destroySession, что и обычный logout: иначе клиент получает
+   * 401 на каждый следующий /me, но кука-«зомби» на несуществующего пользователя продолжает
+   * жить в браузере до истечения TTL.
    */
-  async getMe(userId: string): Promise<UserResponseDto> {
+  async getMe(userId: string, request: Request, response: Response): Promise<UserResponseDto> {
     const user = await this.userService.findByIdWithHash(userId);
 
     if (user === null) {
+      await this.sessionsService.destroySession(request, response);
       throw new UnauthorizedException('Сессия недействительна');
     }
 
