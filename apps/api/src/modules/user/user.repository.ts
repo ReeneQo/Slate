@@ -41,8 +41,16 @@ export class UserRepository {
     });
   }
 
+  /**
+   * `findFirst`, а не `findUnique`: с уходом `@unique` (SLT-44, functional index по
+   * `lower(email)`) Prisma больше не считает `email` уникальным полем на уровне типов, и
+   * `UserWhereUniqueInput` его не принимает — компилятор потребовал бы `id`. `findFirst`
+   * такого ограничения не знает и подходит по смыслу: вызывающий всегда передаёт email,
+   * уже пропущенный через `normalizeEmail` (см. AuthService), поэтому точное совпадение
+   * `email` матчит не больше одной строки — ту же самую, что находит индекс по `lower()`.
+   */
   findByEmail(email: string): Promise<SafeUser | null> {
-    return this.prisma.user.findUnique({
+    return this.prisma.user.findFirst({
       where: { email },
       select: SAFE_USER_SELECT,
     });
@@ -71,9 +79,13 @@ export class UserRepository {
    *
    * Имя длинное и явное намеренно: `grep -r WithHash` показывает ПОЛНЫЙ список мест,
    * где хеш вообще касается кода. Такой список должен помещаться на экран.
+   *
+   * `findFirst` по той же причине, что и в findByEmail: `email` больше не `@unique` в схеме
+   * (functional index по `lower(email)` живёт только в SQL миграции), поэтому
+   * `UserWhereUniqueInput` его не принимает.
    */
   findByEmailWithHash(email: string): Promise<UserWithHash | null> {
-    return this.prisma.user.findUnique({
+    return this.prisma.user.findFirst({
       where: { email },
       select: USER_WITH_HASH_SELECT,
     });
