@@ -73,7 +73,9 @@ describe('Auth (e2e)', () => {
       expect(sessionCookie(response)).toBeDefined();
 
       // Ответ мог бы быть правильным и без записи в базу — проверяем факт, а не отчёт о нём.
-      const stored = await testApp.prisma.user.findUnique({ where: { email: USER.email } });
+      // findFirst, а не findUnique: email больше не @unique в схеме (SLT-44, functional index
+      // по lower(email) живёт в SQL-миграции) — UserWhereUniqueInput его не принимает.
+      const stored = await testApp.prisma.user.findFirst({ where: { email: USER.email } });
 
       expect(stored).not.toBeNull();
       expect(stored?.displayName).toBe(USER.displayName);
@@ -278,7 +280,8 @@ describe('Auth (e2e)', () => {
         .expect(200);
       const me = await agent.get(ME_URL).expect(200);
 
-      const stored = await testApp.prisma.user.findUnique({ where: { email: USER.email } });
+      // findFirst по той же причине, что и выше: email больше не @unique в схеме.
+      const stored = await testApp.prisma.user.findFirst({ where: { email: USER.email } });
       const passwordHash = stored?.passwordHash;
 
       expect(passwordHash).toEqual(expect.any(String));

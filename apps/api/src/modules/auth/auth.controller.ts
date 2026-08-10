@@ -119,7 +119,11 @@ export class AuthController {
    */
   @Get('me')
   @Authorization()
-  getMe(@Authorized('id') userId: string): Promise<UserResponseDto> {
-    return this.authService.getMe(userId);
+  getMe(
+    @Authorized('id') userId: string,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<UserResponseDto> {
+    return this.authService.getMe(userId, request, response);
   }
 }

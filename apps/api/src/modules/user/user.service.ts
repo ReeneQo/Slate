@@ -50,8 +50,15 @@ export class UserService {
     return this.userRepository.findById(id);
   }
 
+  /**
+   * Нормализует email ЗДЕСЬ, а не полагается на нормализованный вход: `findByEmail` — общая
+   * точка входа для auth (login) и board-sharing (резолв приглашаемого по email), и только
+   * один из этих вызывающих исторически нормализовал email сам. Раз найти пользователя по
+   * email в принципе означает «этот email нечувствителен к регистру» (см. функциональный
+   * индекс `lower(email)` в БД), эта нормализация — инвариант метода, а не забота вызывающего.
+   */
   findByEmail(email: string): Promise<SafeUser | null> {
-    return this.userRepository.findByEmail(email);
+    return this.userRepository.findByEmail(normalizeEmail(email));
   }
 
   /** Batch-резолв по id (см. UserRepository.findManyByIds) — для presence-снимка (SLT-37). */
@@ -59,9 +66,12 @@ export class UserService {
     return this.userRepository.findManyByIds(ids);
   }
 
-  /** Только для проверки пароля при логине (SLT-16). Всем остальным — findByEmail. */
+  /**
+   * Только для проверки пароля при логине (SLT-16). Всем остальным — findByEmail.
+   * Нормализация — по той же причине, что и в findByEmail.
+   */
   findByEmailWithHash(email: string): Promise<UserWithHash | null> {
-    return this.userRepository.findByEmailWithHash(email);
+    return this.userRepository.findByEmailWithHash(normalizeEmail(email));
   }
 
   /**
@@ -82,4 +92,25 @@ export class UserService {
   hasPassword(user: Pick<UserWithHash, 'passwordHash'>): boolean {
     return user.passwordHash !== null;
   }
+
+  /** Прозрачная замена хеша при логине (SLT-44) — см. UserRepository.updatePasswordHash. */
+  updatePasswordHash(id: string, passwordHash: string): Promise<void> {
+    return this.userRepository.updatePasswordHash(id, passwordHash);
+  }
+}
+
+/**
+ * Нормализация email перед записью и перед поиском.
+ *
+ * Регистр в почте не значим, а вводят адрес то так, то эдак. Без приведения `User@mail.ru`
+ * и `user@mail.ru` — две разные строки: unique-constraint не считает их дубликатом
+ * (получаются два аккаунта на один ящик), а поиск «неправильным» регистром не находит
+ * существующего пользователя.
+ *
+ * Экспортирована отсюда (а не дублирована): AuthService нормализует email ПЕРЕД записью
+ * (register) и, defense-in-depth, ещё раз перед поиском (login) — используя ЭТУ ЖЕ функцию,
+ * а не вторую копию `trim().toLowerCase()`, которая рано или поздно разойдётся с этой.
+ */
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
 }

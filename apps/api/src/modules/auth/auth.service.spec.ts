@@ -57,17 +57,23 @@ function createDependencies() {
   const destroySession = jest.fn() as jest.MockedFunction<SessionsService['destroySession']>;
   const hash = jest.fn() as jest.MockedFunction<HashService['hash']>;
   const verify = jest.fn() as jest.MockedFunction<HashService['verify']>;
+  const needsRehash = jest.fn() as jest.MockedFunction<HashService['needsRehash']>;
+  const updatePasswordHash = jest.fn() as jest.MockedFunction<UserService['updatePasswordHash']>;
   const bump = jest.fn() as jest.MockedFunction<SessionGenerationService['bump']>;
 
   saveSession.mockResolvedValue(undefined);
   destroySession.mockResolvedValue(undefined);
   hash.mockResolvedValue(PASSWORD_HASH);
+  // По умолчанию хеш «свежий» — перехеш не нужен. Тесты на сам перехеш переопределяют это.
+  needsRehash.mockReturnValue(false);
+  updatePasswordHash.mockResolvedValue(undefined);
   bump.mockResolvedValue(1);
 
   const userService = {
     create,
     findByEmailWithHash,
     findByIdWithHash,
+    updatePasswordHash,
     findById: jest.fn(),
     findByEmail: jest.fn(),
     // Не мок, а настоящее правило: оно тривиально, а подменённое вернуло бы undefined и
@@ -76,7 +82,7 @@ function createDependencies() {
   } as unknown as UserService;
 
   const sessionsService = { saveSession, destroySession } as unknown as SessionsService;
-  const hashService = { hash, verify } as unknown as HashService;
+  const hashService = { hash, verify, needsRehash } as unknown as HashService;
   const sessionGeneration = { bump } as unknown as SessionGenerationService;
 
   return {
@@ -88,6 +94,8 @@ function createDependencies() {
     destroySession,
     hash,
     verify,
+    needsRehash,
+    updatePasswordHash,
     bump,
   };
 }
@@ -95,6 +103,7 @@ function createDependencies() {
 const registerInput = { email: EMAIL, displayName: DISPLAY_NAME, password: PASSWORD };
 
 const request = {} as Request;
+const response = {} as Response;
 
 describe('AuthService', () => {
   describe('register', () => {
@@ -324,7 +333,7 @@ describe('AuthService', () => {
       const { authService, findByIdWithHash } = createDependencies();
       findByIdWithHash.mockResolvedValue(createUserWithHash());
 
-      const result = await authService.getMe(USER_ID);
+      const result = await authService.getMe(USER_ID, request, response);
 
       expect(result).toEqual({
         id: USER_ID,
@@ -339,20 +348,26 @@ describe('AuthService', () => {
       const { authService, findByIdWithHash } = createDependencies();
       findByIdWithHash.mockResolvedValue(createUserWithHash({ passwordHash: null }));
 
-      const result = await authService.getMe(USER_ID);
+      const result = await authService.getMe(USER_ID, request, response);
 
       // Ради этого флага getMe и ходит за выборкой С хешем: из безопасной выборки факт
       // «пароль есть» не выводится, а фронту он нужен, чтобы предложить задать пароль.
       expect(result.hasPassword).toBe(false);
     });
 
-    it('бросает 401, если сессия ссылается на удалённого пользователя', async () => {
-      const { authService, findByIdWithHash } = createDependencies();
+    it('бросает 401 и гасит сессию, если она ссылается на удалённого пользователя', async () => {
+      const { authService, findByIdWithHash, destroySession } = createDependencies();
       findByIdWithHash.mockResolvedValue(null);
 
       // Именно 401, а не 404: не «ресурс не найден», а «предъявленная кука больше
       // не действительна» — по этому статусу фронт уводит на логин.
-      await expect(authService.getMe(USER_ID)).rejects.toBeInstanceOf(UnauthorizedException);
+      await expect(authService.getMe(USER_ID, request, response)).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+
+      // Той же операцией, что и обычный logout: иначе кука-«зомби» на удалённого
+      // пользователя продолжает жить в браузере до истечения TTL сессии.
+      expect(destroySession).toHaveBeenCalledWith(request, response);
     });
   });
 
@@ -368,7 +383,7 @@ describe('AuthService', () => {
       const responses = [
         await authService.register(request, registerInput),
         await authService.login(request, { email: EMAIL, password: PASSWORD }),
-        await authService.getMe(USER_ID),
+        await authService.getMe(USER_ID, request, response),
       ];
 
       // Проверяем СЕРИАЛИЗОВАННЫЙ ответ, а не наличие ключа: именно в таком виде объект

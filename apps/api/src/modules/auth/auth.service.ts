@@ -1,10 +1,10 @@
-import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import type { Request, Response } from 'express';
 
 import { HashService } from '../../shared/crypto/hash.service';
 import { toUserResponse, type UserResponseDto } from '../user/dto/user-response.dto';
 import { EmailAlreadyTakenError } from '../user/user.errors';
-import { UserService } from '../user/user.service';
+import { normalizeEmail, UserService } from '../user/user.service';
 import { type AuthUserDto, toAuthUser } from './dto/auth-user.dto';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
@@ -43,6 +43,8 @@ const INVALID_CREDENTIALS_MESSAGE = 'Неверный email или пароль'
  */
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly userService: UserService,
     private readonly sessionsService: SessionsService,
@@ -90,6 +92,14 @@ export class AuthService {
    * есть выравнивание времени; ранний `return` в ветке «нет такого email» обнулил бы весь
    * смысл конструкции.
    *
+   * После успешной проверки — best-effort перехеш (SLT-44): если ARGON2_OPTIONS подняли уже
+   * ПОСЛЕ того, как этот хеш был записан, старая строка перезаписывается новой на тех же
+   * параметрах, которыми хешируются пароли сейчас. Место вставки строго между verify и
+   * saveSession: раньше плайн-пароль ещё не проверен, позже (`saveSession` делает
+   * `regenerate`) — риска нет, но логике естественнее идти в порядке «проверили → обновили
+   * запись → выдали сессию». Сам перехеш никогда не мешает входу: сбой записи в БД
+   * проглатывается внутри rehashIfNeeded, а не летит наружу.
+   *
    * Отдельно про OAuth-пользователя: `passwordHash === null` — не ошибка и не повод падать.
    * Такой аккаунт заведён без пароля, `??` уводит его в ту же фиктивную проверку, и он
    * получает ровно тот же отказ. Вызов `verify(null, ...)` уронил бы argon2 пятисоткой,
@@ -106,6 +116,7 @@ export class AuthService {
       throw new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
     }
 
+    await this.rehashIfNeeded(user.id, user.passwordHash, dto.password);
     await this.sessionsService.saveSession(request, user);
 
     return toAuthUser(user);
@@ -150,16 +161,49 @@ export class AuthService {
    * ниже, а маппер перечисляет поля поимённо.
    *
    * null означает, что сессия ссылается на удалённого пользователя, — это 401, а не 404:
-   * ресурс не «не найден», а предъявленные учётные данные больше не действительны.
+   * ресурс не «не найден», а предъявленные учётные данные больше не действительны. Кука в
+   * этом случае гасится тем же destroySession, что и обычный logout: иначе клиент получает
+   * 401 на каждый следующий /me, но кука-«зомби» на несуществующего пользователя продолжает
+   * жить в браузере до истечения TTL.
    */
-  async getMe(userId: string): Promise<UserResponseDto> {
+  async getMe(userId: string, request: Request, response: Response): Promise<UserResponseDto> {
     const user = await this.userService.findByIdWithHash(userId);
 
     if (user === null) {
+      await this.sessionsService.destroySession(request, response);
       throw new UnauthorizedException('Сессия недействительна');
     }
 
     return toUserResponse(user, this.userService.hasPassword(user));
+  }
+
+  /**
+   * Best-effort перехеш пароля при логине (SLT-44).
+   *
+   * «Best-effort» означает: сбой записи НЕ должен ронять логин, поэтому единственная
+   * доменная ошибка, которую этот метод может произвести наружу, — отсутствует в принципе,
+   * try/catch ловит всё. Пользователь и так уже прошёл verify — отказать ему во входе из-за
+   * упавшей фоновой перезаписи хеша было бы явно хуже, чем оставить старый хеш ещё немного.
+   *
+   * `plainPassword` доступен только здесь и только в этот момент: это единственное место
+   * во всём login, где открытый пароль вообще нужен ПОСЛЕ verify.
+   */
+  private async rehashIfNeeded(
+    userId: string,
+    currentHash: string,
+    plainPassword: string,
+  ): Promise<void> {
+    if (!this.hashService.needsRehash(currentHash)) {
+      return;
+    }
+
+    try {
+      const newHash = await this.hashService.hash(plainPassword);
+      await this.userService.updatePasswordHash(userId, newHash);
+    } catch (error) {
+      // Пароль/хеш в лог не идут намеренно — только факт сбоя и его причина.
+      this.logger.warn('Не удалось перехешировать пароль при логине', error);
+    }
   }
 
   /**
@@ -183,18 +227,3 @@ export class AuthService {
 
 /** Возврат UserService.create — вынесен в псевдоним, чтобы не тянуть импорт сущности ради одной подписи. */
 type SafeUserResult = Awaited<ReturnType<UserService['create']>>;
-
-/**
- * Нормализация email перед записью и перед поиском.
- *
- * Регистр в почте не значим, а вводят адрес то так, то эдак. Без приведения `User@mail.ru`
- * и `user@mail.ru` — две разные строки: unique-constraint не считает их дубликатом
- * (получаются два аккаунта на один ящик), а логин «неправильным» регистром не находит
- * существующего пользователя.
- *
- * Ключевое — одна и та же функция применяется и в register, и в login. Нормализация только
- * при записи даёт гарантированный баг «зарегистрировался, а войти не могу».
- */
-function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
-}

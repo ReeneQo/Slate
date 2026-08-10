@@ -52,4 +52,17 @@ export class HashService {
   verify(hash: string, plain: string): Promise<boolean> {
     return argon2.verify(hash, plain);
   }
+
+  /**
+   * true, если хеш посчитан НЕ теми параметрами, что сейчас в ARGON2_OPTIONS — либо
+   * ARGON2_OPTIONS подняли после того, как хеш был записан, либо строка вообще не argon2id.
+   * Сверяется с ТОЙ ЖЕ константой, что использует hash(): иначе легко словить рассинхрон,
+   * когда «текущие» параметры для проверки и для записи тихо разъедутся.
+   *
+   * Используется в AuthService.login как повод перехешировать пароль на лету — единственный
+   * момент, когда открытый пароль вообще есть в памяти процесса.
+   */
+  needsRehash(hash: string): boolean {
+    return argon2.needsRehash(hash, ARGON2_OPTIONS);
+  }
 }

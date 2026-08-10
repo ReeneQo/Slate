@@ -17,7 +17,11 @@ generator client {
 model User {
   id String @id @default(uuid(7)) @db.Uuid
 
-  email        String  @unique
+  // Уникальность НЕ здесь: Prisma не умеет функциональные индексы декларативно.
+  // Настоящий constraint — functional unique index по lower(email), см. миграцию
+  // user_email_lower_unique_index. normalizeEmail в AuthService — дополнительный слой,
+  // а не замена этому индексу: без него гонка на регистр всё ещё ловится в БД.
+  email        String
   // Nullable: заготовка под OAuth-регистрацию (блок 2) — у такого юзера пароля нет.
   // На фронт отдаём флаг hasPassword, сам хеш наружу не уходит.
   passwordHash String? @map("password_hash")
