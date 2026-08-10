@@ -120,6 +120,21 @@ export class UserRepository {
       throw error;
     }
   }
+
+  /**
+   * Перезапись хеша прозрачным перехешем при логине (SLT-44): параметры argon2 подняли
+   * ПОСЛЕ того, как хеш был записан, и мы обновляем его, не заставляя пользователя менять
+   * пароль. Вызывающий (AuthService.login) оборачивает вызов в try/catch — сбой записи не
+   * должен ронять логин, поэтому здесь она НЕ проглатывается сама, а просто выполняется как
+   * обычная мутация.
+   */
+  async updatePasswordHash(id: string, passwordHash: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id },
+      data: { passwordHash },
+      select: { id: true },
+    });
+  }
 }
 
 /**

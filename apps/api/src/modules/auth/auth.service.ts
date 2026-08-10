@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import type { Request, Response } from 'express';
 
 import { HashService } from '../../shared/crypto/hash.service';
@@ -43,6 +43,8 @@ const INVALID_CREDENTIALS_MESSAGE = 'Неверный email или пароль'
  */
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly userService: UserService,
     private readonly sessionsService: SessionsService,
@@ -90,6 +92,14 @@ export class AuthService {
    * есть выравнивание времени; ранний `return` в ветке «нет такого email» обнулил бы весь
    * смысл конструкции.
    *
+   * После успешной проверки — best-effort перехеш (SLT-44): если ARGON2_OPTIONS подняли уже
+   * ПОСЛЕ того, как этот хеш был записан, старая строка перезаписывается новой на тех же
+   * параметрах, которыми хешируются пароли сейчас. Место вставки строго между verify и
+   * saveSession: раньше плайн-пароль ещё не проверен, позже (`saveSession` делает
+   * `regenerate`) — риска нет, но логике естественнее идти в порядке «проверили → обновили
+   * запись → выдали сессию». Сам перехеш никогда не мешает входу: сбой записи в БД
+   * проглатывается внутри rehashIfNeeded, а не летит наружу.
+   *
    * Отдельно про OAuth-пользователя: `passwordHash === null` — не ошибка и не повод падать.
    * Такой аккаунт заведён без пароля, `??` уводит его в ту же фиктивную проверку, и он
    * получает ровно тот же отказ. Вызов `verify(null, ...)` уронил бы argon2 пятисоткой,
@@ -106,6 +116,7 @@ export class AuthService {
       throw new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
     }
 
+    await this.rehashIfNeeded(user.id, user.passwordHash, dto.password);
     await this.sessionsService.saveSession(request, user);
 
     return toAuthUser(user);
@@ -164,6 +175,35 @@ export class AuthService {
     }
 
     return toUserResponse(user, this.userService.hasPassword(user));
+  }
+
+  /**
+   * Best-effort перехеш пароля при логине (SLT-44).
+   *
+   * «Best-effort» означает: сбой записи НЕ должен ронять логин, поэтому единственная
+   * доменная ошибка, которую этот метод может произвести наружу, — отсутствует в принципе,
+   * try/catch ловит всё. Пользователь и так уже прошёл verify — отказать ему во входе из-за
+   * упавшей фоновой перезаписи хеша было бы явно хуже, чем оставить старый хеш ещё немного.
+   *
+   * `plainPassword` доступен только здесь и только в этот момент: это единственное место
+   * во всём login, где открытый пароль вообще нужен ПОСЛЕ verify.
+   */
+  private async rehashIfNeeded(
+    userId: string,
+    currentHash: string,
+    plainPassword: string,
+  ): Promise<void> {
+    if (!this.hashService.needsRehash(currentHash)) {
+      return;
+    }
+
+    try {
+      const newHash = await this.hashService.hash(plainPassword);
+      await this.userService.updatePasswordHash(userId, newHash);
+    } catch (error) {
+      // Пароль/хеш в лог не идут намеренно — только факт сбоя и его причина.
+      this.logger.warn('Не удалось перехешировать пароль при логине', error);
+    }
   }
 
   /**

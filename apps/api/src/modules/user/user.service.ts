@@ -82,4 +82,9 @@ export class UserService {
   hasPassword(user: Pick<UserWithHash, 'passwordHash'>): boolean {
     return user.passwordHash !== null;
   }
+
+  /** Прозрачная замена хеша при логине (SLT-44) — см. UserRepository.updatePasswordHash. */
+  updatePasswordHash(id: string, passwordHash: string): Promise<void> {
+    return this.userRepository.updatePasswordHash(id, passwordHash);
+  }
 }

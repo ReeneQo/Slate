@@ -57,17 +57,23 @@ function createDependencies() {
   const destroySession = jest.fn() as jest.MockedFunction<SessionsService['destroySession']>;
   const hash = jest.fn() as jest.MockedFunction<HashService['hash']>;
   const verify = jest.fn() as jest.MockedFunction<HashService['verify']>;
+  const needsRehash = jest.fn() as jest.MockedFunction<HashService['needsRehash']>;
+  const updatePasswordHash = jest.fn() as jest.MockedFunction<UserService['updatePasswordHash']>;
   const bump = jest.fn() as jest.MockedFunction<SessionGenerationService['bump']>;
 
   saveSession.mockResolvedValue(undefined);
   destroySession.mockResolvedValue(undefined);
   hash.mockResolvedValue(PASSWORD_HASH);
+  // По умолчанию хеш «свежий» — перехеш не нужен. Тесты на сам перехеш переопределяют это.
+  needsRehash.mockReturnValue(false);
+  updatePasswordHash.mockResolvedValue(undefined);
   bump.mockResolvedValue(1);
 
   const userService = {
     create,
     findByEmailWithHash,
     findByIdWithHash,
+    updatePasswordHash,
     findById: jest.fn(),
     findByEmail: jest.fn(),
     // Не мок, а настоящее правило: оно тривиально, а подменённое вернуло бы undefined и
@@ -76,7 +82,7 @@ function createDependencies() {
   } as unknown as UserService;
 
   const sessionsService = { saveSession, destroySession } as unknown as SessionsService;
-  const hashService = { hash, verify } as unknown as HashService;
+  const hashService = { hash, verify, needsRehash } as unknown as HashService;
   const sessionGeneration = { bump } as unknown as SessionGenerationService;
 
   return {
@@ -88,6 +94,8 @@ function createDependencies() {
     destroySession,
     hash,
     verify,
+    needsRehash,
+    updatePasswordHash,
     bump,
   };
 }
