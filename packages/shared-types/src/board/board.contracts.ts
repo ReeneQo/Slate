@@ -19,6 +19,7 @@ import { boardAccessRoleSchema, boardMemberRoleSchema } from './board-member.typ
 /** Название доски. Правила ровно те же, что у декораторов CreateBoardDto/UpdateBoardDto. */
 const boardTitleSchema = z
   .string()
+  .trim()
   .min(1, 'Название не может быть пустым')
   .max(BOARD_TITLE_MAX_LENGTH, `Название не длиннее ${BOARD_TITLE_MAX_LENGTH} символов`);
 
