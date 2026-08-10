@@ -4,7 +4,7 @@ import type { Request, Response } from 'express';
 import { HashService } from '../../shared/crypto/hash.service';
 import { toUserResponse, type UserResponseDto } from '../user/dto/user-response.dto';
 import { EmailAlreadyTakenError } from '../user/user.errors';
-import { UserService } from '../user/user.service';
+import { normalizeEmail, UserService } from '../user/user.service';
 import { type AuthUserDto, toAuthUser } from './dto/auth-user.dto';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
@@ -227,18 +227,3 @@ export class AuthService {
 
 /** Возврат UserService.create — вынесен в псевдоним, чтобы не тянуть импорт сущности ради одной подписи. */
 type SafeUserResult = Awaited<ReturnType<UserService['create']>>;
-
-/**
- * Нормализация email перед записью и перед поиском.
- *
- * Регистр в почте не значим, а вводят адрес то так, то эдак. Без приведения `User@mail.ru`
- * и `user@mail.ru` — две разные строки: unique-constraint не считает их дубликатом
- * (получаются два аккаунта на один ящик), а логин «неправильным» регистром не находит
- * существующего пользователя.
- *
- * Ключевое — одна и та же функция применяется и в register, и в login. Нормализация только
- * при записи даёт гарантированный баг «зарегистрировался, а войти не могу».
- */
-function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
-}

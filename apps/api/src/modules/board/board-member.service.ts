@@ -156,6 +156,10 @@ export class BoardMemberService {
    * @throws {NotFoundException} email не зарегистрирован. Раскрытие факта регистрации по email —
    *   принятый компромисс MVP (SLT-42, решение 1): шеринг предполагается между людьми, знающими
    *   email друг друга, это не публичный энумератор.
+   *
+   * Email сюда приходит СЫРЫМ, ровно как ввёл приглашающий (`InviteMemberDto` валидирует только
+   * формат, не регистр) — и это нормально: `UserService.findByEmail` нормализует сам (SLT-44),
+   * это его инвариант, а не обязанность вызывающего.
    */
   private async resolveInvitee(email: string): Promise<SafeUser> {
     const invitee = await this.userService.findByEmail(email);
