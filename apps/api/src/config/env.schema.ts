@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { durationToMs } from './duration.schema';
+
 /**
  * Схема переменных окружения.
  *
@@ -38,11 +40,12 @@ const rawEnvSchema = z.object({
   // сканеру стек (express-session).
   SESSION_NAME: z.string().min(1),
 
-  // TTL сессии в МИЛЛИСЕКУНДАХ. Единица выбрана под потребителя: express-session
+  // TTL сессии человекочитаемой строкой ("7d", "24h") → durationToMs парсит в
+  // МИЛЛИСЕКУНДЫ. Единица на выходе выбрана под потребителя: express-session
   // принимает cookie.maxAge именно в мс, поэтому на месте использования нет ни
   // конверсии, ни повода перепутать секунды с миллисекундами. Для Redis-store
   // (ttl в секундах) конверсия одна, явная и в одном месте — см. session.factory.
-  SESSION_MAX_AGE: z.coerce.number().int().positive(),
+  SESSION_MAX_AGE: durationToMs,
 
   // Домен cookie. ОПЦИОНАЛЬНА: в деве пусто (браузер сам привяжет к localhost —
   // явный `domain: 'localhost'` часть браузеров отвергает), в проде — общий домен

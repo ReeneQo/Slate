@@ -65,7 +65,7 @@ export function buildTestEnv(databaseUrl: string, redisUrl: string): NodeJS.Proc
     ALLOWED_ORIGIN: 'http://localhost:5173',
     SESSION_SECRET: 'e2e-only-session-secret-not-a-real-one',
     SESSION_NAME: TEST_SESSION_COOKIE_NAME,
-    SESSION_MAX_AGE: '604800000',
+    SESSION_MAX_AGE: '7d',
   };
 }
 
