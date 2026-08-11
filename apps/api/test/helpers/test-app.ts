@@ -45,6 +45,12 @@ export function buildTestEnv(databaseUrl: string, redisUrl: string): NodeJS.Proc
     SESSION_SECRET: 'e2e-only-session-secret-not-a-real-one',
     SESSION_NAME: TEST_SESSION_COOKIE_NAME,
     SESSION_MAX_AGE: '7d',
+    // GitHub OAuth не мокается в e2e (SLT-52 не покрыт e2e-сценариями — только реальные
+    // запросы к github.com дали бы смысл проверке), значения нужны исключительно затем,
+    // чтобы схема env прошла валидацию и приложение вообще поднялось под тестом.
+    API_BASE_URL: 'http://localhost:3000',
+    GITHUB_CLIENT_ID: 'e2e-github-client-id',
+    GITHUB_CLIENT_SECRET: 'e2e-github-client-secret',
   };
 }
 

@@ -51,6 +51,18 @@ const rawEnvSchema = z.object({
   // явный `domain: 'localhost'` часть браузеров отвергает), в проде — общий домен
   // под кросс-сабдоменные куки (api.slate.app + app.slate.app).
   SESSION_DOMAIN: z.string().min(1).optional(),
+
+  // Собственный базовый URL API (без /api и без завершающего слеша), напр.
+  // http://localhost:3000 в деве. Нужен, чтобы строить redirect_uri OAuth-провайдеров
+  // (GitHub требует АБСОЛЮТНЫЙ URL, а сервер не знает свой внешний адрес из запроса —
+  // за прокси/туннелем Host может быть чем угодно). ALLOWED_ORIGIN для этого не подходит:
+  // тот — адрес ФРОНТА, а redirect_uri callback'а живёт на бэке.
+  API_BASE_URL: z.url(),
+
+  // OAuth: GitHub. Обязательные — без них хендшейк невозможен, а тихо стартовать
+  // сервер, который на первом же /oauth/connect упадёт 500, хуже, чем не стартовать вовсе.
+  GITHUB_CLIENT_ID: z.string().min(1),
+  GITHUB_CLIENT_SECRET: z.string().min(1),
 });
 
 export const envSchema = rawEnvSchema.transform((env) => ({
@@ -59,6 +71,7 @@ export const envSchema = rawEnvSchema.transform((env) => ({
     nodeEnv: env.NODE_ENV,
     allowedOrigin: env.ALLOWED_ORIGIN,
     trustProxy: env.TRUST_PROXY,
+    baseUrl: env.API_BASE_URL,
   },
   database: {
     url: env.DATABASE_URL,
@@ -78,6 +91,12 @@ export const envSchema = rawEnvSchema.transform((env) => ({
     // HTTP и снимается любым перехватчиком) или включили в деве (браузер молча
     // отбрасывает secure-куку на http://localhost, и «логин не работает» без ошибок).
     secureCookie: env.NODE_ENV === 'production',
+  },
+  oauth: {
+    github: {
+      clientId: env.GITHUB_CLIENT_ID,
+      clientSecret: env.GITHUB_CLIENT_SECRET,
+    },
   },
 }));
 
