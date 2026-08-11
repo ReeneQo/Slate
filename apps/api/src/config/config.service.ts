@@ -29,4 +29,8 @@ export class ConfigService {
   get session(): AppConfig['session'] {
     return this.config.session;
   }
+
+  get oauth(): AppConfig['oauth'] {
+    return this.config.oauth;
+  }
 }
