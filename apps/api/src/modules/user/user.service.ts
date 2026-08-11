@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Prisma } from '@slate/database';
 
 import { HashService } from '../../shared/crypto/hash.service';
 import type { SafeUser, UserWithHash } from './entities/user.entity';
@@ -8,6 +9,12 @@ import { UserRepository } from './user.repository';
 export interface CreateUserInput {
   email: string;
   password: string;
+  displayName: string;
+}
+
+/** Вход OAuth-регистрации (SLT-54): пароля нет как класса, хешировать нечего. */
+export interface CreateOAuthUserInput {
+  email: string;
   displayName: string;
 }
 
@@ -44,6 +51,27 @@ export class UserService {
     const passwordHash = await this.hashService.hash(password);
 
     return this.userRepository.create({ email, passwordHash, displayName });
+  }
+
+  /**
+   * Создание OAuth-пользователя (SLT-54, ветка 3 резолва входа): `passwordHash: null` через
+   * ТОТ ЖЕ путь, что и password-регистрация, но БЕЗ хеширования — хешировать нечего, пароля
+   * нет как класса (не «пустая строка», а его отсутствие, ровно как читает `login` в
+   * AuthService через `?? DUMMY_HASH`).
+   *
+   * `tx` пробрасывается насквозь до репозитория: OAuthService создаёт User и Account в одной
+   * `prisma.$transaction`, и этот метод — единственная точка, где transaction-клиент входит
+   * в модуль user. Без `tx` (сюда, впрочем, не попадает — вызывающий всегда в транзакции)
+   * работал бы как обычная вставка.
+   *
+   * @throws {EmailAlreadyTakenError} email занят — гонка с параллельной регистрацией/входом
+   * на тот же email, резолвится вызывающим (см. OAuthService.loginOAuth).
+   */
+  createOAuthUser(
+    { email, displayName }: CreateOAuthUserInput,
+    tx?: Prisma.TransactionClient,
+  ): Promise<SafeUser> {
+    return this.userRepository.create({ email, passwordHash: null, displayName }, tx);
   }
 
   findById(id: string): Promise<SafeUser | null> {

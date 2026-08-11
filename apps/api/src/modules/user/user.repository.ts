@@ -13,10 +13,14 @@ import { EmailAlreadyTakenError } from './user.errors';
 /** Код Prisma для нарушения unique-constraint. */
 const UNIQUE_CONSTRAINT_VIOLATION = 'P2002';
 
-/** Данные для вставки. `passwordHash` — УЖЕ захешированный: репозиторий не хеширует. */
+/**
+ * Данные для вставки. `passwordHash` — УЖЕ захешированный: репозиторий не хеширует.
+ * `null` — OAuth-регистрация (SLT-54): у такого пользователя пароля нет вообще, это не
+ * «пустой пароль», а его отсутствие как класса (см. `login` в AuthService, ветка `?? DUMMY_HASH`).
+ */
 export interface CreateUserData {
   email: string;
-  passwordHash: string;
+  passwordHash: string | null;
   displayName: string;
 }
 
@@ -116,11 +120,18 @@ export class UserRepository {
    *
    * `select` нужен и на create: без него Prisma возвращает всю вставленную строку,
    * включая только что записанный хеш.
+   *
+   * `tx` — опциональный клиент транзакции (SLT-54): новый OAuth-пользователь создаётся
+   * атомарно вместе с Account (`prisma.$transaction` в OAuthService.loginOAuth), и запись
+   * обязана идти через ТОТ ЖЕ клиент — иначе она уйдёт в собственную транзакцию, и «атомарно»
+   * станет неправдой. Без tx (password-регистрация) работает как раньше, через `this.prisma`.
    */
-  async create(data: CreateUserData): Promise<SafeUser> {
+  async create(data: CreateUserData, tx?: Prisma.TransactionClient): Promise<SafeUser> {
+    const client = tx ?? this.prisma;
+
     try {
       // `await` внутри try обязателен: без него промис уедет наружу и catch не сработает.
-      return await this.prisma.user.create({
+      return await client.user.create({
         data,
         select: SAFE_USER_SELECT,
       });
