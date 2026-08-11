@@ -12,7 +12,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
-    "test:e2e": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest-e2e.config.mjs"
+    "test:e2e": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest-e2e.config.mjs --runInBand"
   },
   "dependencies": {
     "@nest-lab/throttler-storage-redis": "^1.2.0",
