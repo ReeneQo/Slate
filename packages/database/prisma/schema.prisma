@@ -32,8 +32,26 @@ model User {
 
   boards           Board[]
   boardMemberships BoardMember[]
+  accounts         Account[]
 
   @@map("users")
+}
+
+model Account {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  provider          String
+  providerAccountId String @map("provider_account_id")
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("account")
 }
 
 model Board {
