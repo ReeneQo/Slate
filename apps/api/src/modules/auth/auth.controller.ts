@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Req, Res } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 
@@ -9,6 +9,7 @@ import { AuthService } from './auth.service';
 import type { AuthUserDto } from './dto/auth-user.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { OAuthService } from './oauth.service';
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -27,6 +28,13 @@ const LOGIN_THROTTLE = { limit: 5, ttl: 15 * MINUTE_MS };
 const REGISTER_THROTTLE = { limit: 3, ttl: HOUR_MS };
 
 /**
+ * connect — 10 / минуту. Роут ничего не проверяет и не создаёт (только генерирует state и
+ * отдаёт URL), поэтому лимит не про подбор, а про то, чтобы не давать штамповать
+ * одноразовые state-записи в Redis бесконечным потоком запросов.
+ */
+const OAUTH_CONNECT_THROTTLE = { limit: 10, ttl: MINUTE_MS };
+
+/**
  * Транспортный слой: принять, отдать, назначить статус. Ни одного правила — все решения
  * принимает AuthService.
  *
@@ -42,7 +50,10 @@ const REGISTER_THROTTLE = { limit: 3, ttl: HOUR_MS };
  */
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly oauthService: OAuthService,
+  ) {}
 
   /**
    * 201 — статус Nest по умолчанию для POST, и здесь он корректен: ресурс (пользователь)
@@ -125,5 +136,18 @@ export class AuthController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<UserResponseDto> {
     return this.authService.getMe(userId, request, response);
+  }
+
+  /**
+   * Выдаёт authorize-URL GitHub для входа. Редирект инициирует ФРОНТ (`window.location =
+   * url`), не бэк — здесь только генерация одноразового state и сборка URL.
+   *
+   * Граница SLT-52: сам callback (`/oauth/callback/:provider`) с резолвом входа и редиректом
+   * на фронт — SLT-54, его в этом контроллере ещё нет.
+   */
+  @Get('oauth/connect/:provider')
+  @Throttle({ default: OAUTH_CONNECT_THROTTLE })
+  connectOAuth(@Param('provider') provider: string): Promise<{ url: string }> {
+    return this.oauthService.getConnectUrl(provider);
   }
 }
