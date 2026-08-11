@@ -52,7 +52,12 @@ model Board {
   elements Element[]
   members  BoardMember[]
 
-  @@index([ownerId])
+  // Опора под findAllAccessibleBy (owner-ветка) и под будущий курсор пагинации: ownerId — фильтр,
+  // updatedAt DESC — текущая сортировка, id — тай-брейк курсора (SLT-47, блок 5b). Заменяет
+  // прежний @@index([ownerId]): он был чистым префиксом этого составного индекса и не покрывал
+  // ничего, что не покрывает и этот (leftmost-prefix), поэтому отдельно не остаётся — иначе
+  // каждая запись в Board платила бы за два индекса с одним и тем же ведущим полем.
+  @@index([ownerId, updatedAt(sort: Desc), id])
   @@map("boards")
 }
 

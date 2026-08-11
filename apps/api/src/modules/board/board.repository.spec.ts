@@ -112,7 +112,7 @@ describe('BoardRepository', () => {
       // Без `id` в отличие от ACCESS_SCOPED_WHERE у findAccessible: это список, а не одна доска —
       // scope тот же (`accessibleBoardScope`), просто без сужения по конкретному id.
       where: { OR: [{ ownerId: USER_ID }, { members: { some: { userId: USER_ID } } }] },
-      orderBy: { updatedAt: 'desc' },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
       select: {
         ...BOARD_SELECT,
         ownerId: true,

@@ -68,12 +68,15 @@ export class BoardRepository {
    * из списка была бы такой же дырой, как утечка `version`.
    *
    * Сортировка по updatedAt — как и раньше: на дашборде сверху то, что правили последним,
-   * считает БД, а не сервис.
+   * считает БД, а не сервис. Тай-брейк по `id` (SLT-47, блок 5b) — не для текущей выдачи (она
+   * без пагинации, дублей `updatedAt` в проде мало), а чтобы порядок был детерминированным и
+   * совпадал с ключом будущего курсора: если сортировку сузить только до `updatedAt`, две доски
+   * с одинаковым значением могут поменяться местами между страницами.
    */
   async findAllAccessibleBy(userId: string): Promise<AccessibleBoardEntity[]> {
     const boards = await this.prisma.board.findMany({
       where: accessibleBoardScope(userId),
-      orderBy: { updatedAt: 'desc' },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
       select: {
         ...BOARD_SELECT,
         ownerId: true,
