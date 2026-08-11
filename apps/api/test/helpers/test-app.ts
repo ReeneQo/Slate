@@ -1,11 +1,8 @@
-import { execFileSync } from 'node:child_process';
 import type { Server } from 'node:http';
-import { resolve } from 'node:path';
 
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
-import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
+import type { Redis } from 'ioredis';
 import request from 'supertest';
 
 import { AppModule } from '../../src/app.module';
@@ -13,25 +10,7 @@ import { configureApp } from '../../src/bootstrap/configure-app';
 import { validateEnv } from '../../src/config/env.validation';
 import { PrismaService } from '../../src/infrastructure/prisma/prisma.service';
 import { RedisService } from '../../src/infrastructure/redis/redis.service';
-
-/**
- * Образы те же, что в docker-compose.yml. Расхождение здесь — худший вид зелёных тестов:
- * они проверяли бы поведение СУБД, которой нет ни у кого ни в деве, ни в проде. Версии
- * зафиксированы точно (не `latest`) по той же причине — прогон не должен менять смысл
- * оттого, что в реестре обновился тег.
- */
-export const POSTGRES_IMAGE = 'postgres:16';
-export const REDIS_IMAGE = 'redis:7';
-
-/** Корень пакета с Prisma-схемой: миграции запускаются оттуда, схема адресуется относительно него. */
-const DATABASE_PACKAGE_DIR = resolve(__dirname, '../../../../packages/database');
-
-/**
- * Одна таблица, а не список: остальные (boards, elements, board_members) ссылаются на users
- * внешними ключами, и CASCADE уносит их сам. Перечислять их вручную — значит завести список,
- * который придётся не забыть дополнить в блоке 3.
- */
-const TRUNCATE_ALL_SQL = 'TRUNCATE TABLE "users" RESTART IDENTITY CASCADE';
+import { readSharedConnectionStrings } from './shared-connection';
 
 /**
  * Имя session-куки в тестах. Совпадает с дев-значением SESSION_NAME, но задано здесь явно:
@@ -69,37 +48,6 @@ export function buildTestEnv(databaseUrl: string, redisUrl: string): NodeJS.Proc
   };
 }
 
-/**
- * Накатывает миграции на свежий контейнер.
- *
- * Шаг обязательный и именно в этом месте: контейнерный Postgres пуст, таблиц в нём нет,
- * и без миграций первый же register упал бы пятисоткой «relation users does not exist» —
- * ошибкой, которая выглядит как баг приложения, а не как незаконченная подготовка.
- *
- * `migrate deploy`, а не `migrate dev`: deploy только применяет уже существующие файлы
- * миграций и ничего не генерирует. dev в этой роли стал бы сравнивать схему с базой, а при
- * расхождении — предлагать сброс, то есть интерактивный вопрос посреди прогона.
- *
- * DATABASE_URL передаётся ТОЛЬКО этому процессу, через env дочернего вызова. Писать его в
- * process.env текущего процесса нельзя: prisma.config.ts читает переменную «мягко», и такая
- * запись протекла бы в остальной прогон.
- */
-export function applyMigrations(databaseUrl: string): void {
-  try {
-    execFileSync('pnpm', ['exec', 'prisma', 'migrate', 'deploy'], {
-      cwd: DATABASE_PACKAGE_DIR,
-      env: { ...process.env, DATABASE_URL: databaseUrl },
-      stdio: 'pipe',
-    });
-  } catch (error) {
-    // Без этого наружу выходит голое «Command failed» с кодом возврата: stdio: 'pipe'
-    // проглатывает stderr Prisma, где как раз и написана настоящая причина.
-    const stderr = error instanceof Error && 'stderr' in error ? String(error.stderr) : '';
-
-    throw new Error(`prisma migrate deploy не отработал:\n${stderr}`);
-  }
-}
-
 /** Агент supertest с собственной банкой кук — тип берём у самой библиотеки, чтобы не угадывать. */
 export type TestAgent = ReturnType<typeof request.agent>;
 
@@ -113,31 +61,74 @@ export interface TestApp {
   createAgent(): TestAgent;
   /** Сброс состояния между тестами. */
   reset(): Promise<void>;
-  /** Закрыть приложение и погасить контейнеры. */
+  /** Закрыть приложение. Контейнеры общие на весь прогон — их гасит globalTeardown. */
   stop(): Promise<void>;
 }
 
 /**
- * Поднимает полное окружение: контейнеры → миграции → приложение.
+ * Список таблиц берётся динамически из information_schema, а не хардкодится. До SLT-48 здесь
+ * лежала одна строка `TRUNCATE TABLE "users" ... CASCADE`, и она работала только потому, что
+ * все остальные таблицы ссылались на users внешним ключом. Новая таблица без такой ссылки
+ * протекала бы между тестами молча: CASCADE её бы не подхватил, а узнать об этом можно было бы
+ * только по нестабильным падениям от чужих данных, а не по явной ошибке.
  *
- * Порядок здесь причинно-следственный, а не стилистический. Контейнеры первыми, потому что
- * до старта неизвестны их URL: порты назначаются случайные (иначе параллельные прогоны и
- * локальный docker-compose дрались бы за 5432). Миграции вторыми — приложение при старте
- * коннектится к базе, и схема к этому моменту уже должна быть накатана. Приложение
- * последним, получая оба URL значением.
+ * `_prisma_migrations` исключена: это служебная таблица самого Prisma, трогать её не нужно и
+ * не должно — миграции накатаны один раз в globalSetup.
+ */
+async function truncateAllTables(prisma: PrismaService): Promise<void> {
+  const tables = await prisma.$queryRaw<{ table_name: string }[]>`
+    SELECT table_name FROM information_schema.tables
+    WHERE table_schema = current_schema()
+      AND table_type = 'BASE TABLE'
+      AND table_name <> '_prisma_migrations'
+  `;
+
+  if (tables.length === 0) {
+    return;
+  }
+
+  const targets = tables.map(({ table_name }) => `"${table_name}"`).join(', ');
+
+  // RESTART IDENTITY — на будущее: все id в схеме сейчас uuid v7 (нет serial/autoincrement),
+  // так что сбрасывать нечего, но это дёшево и защищает от неявной регрессии, если появится
+  // таблица со своей последовательностью.
+  await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${targets} RESTART IDENTITY CASCADE`);
+}
+
+/**
+ * Общий хук изоляции для ВСЕХ e2e (SLT-48). И test-app (обычные спеки), и multi-instance
+ * (realtime-redis-adapter) зовут ИМЕННО эту функцию в своём reset(), а не пишут свой
+ * truncate/flushdb — иначе список таблиц или порядок операций рано или поздно разошлись бы
+ * между обычными спеками и адаптером.
  *
- * Контейнеры стартуют параллельно: они друг от друга не зависят, а на холодном старте это
- * разница между «двумя ожиданиями подряд» и «одним».
+ * Порядок: сначала Postgres, потом Redis. Не то чтобы порядок был причинно важен (таблицы и
+ * Redis-ключи друг от друга не зависят), но так тест, упавший на самом truncate, не оставляет
+ * относительно него грязный Redis — проще диагностировать по логу, что именно не сброшено.
+ *
+ * Чистятся ДВА хранилища, и пропуск любого даёт свой характерный провал:
+ * 1. Таблицы — иначе повторный прогон падает на «email занят» в тесте регистрации:
+ *    пользователь остался от прошлого раза (или от предыдущего e2e-файла — контейнер общий).
+ * 2. Redis (flushdb) — снимает разом ДВЕ вещи из одной базы:
+ *    - сессии: иначе тест «без куки → 401» рискует пройти по чужой валидной сессии;
+ *    - счётчики throttler'а: лимиты боевые (register 3/час, login 5/15 мин), приложение
+ *      поднято ОДНО на весь файл, IP у supertest всегда один — без сброса четвёртый по счёту
+ *      register получил бы 429 не в том тесте, что его исчерпал. Счётчики живут в том же
+ *      Redis (SLT-29, storage → Redis), поэтому flushdb чистит и их.
+ */
+export async function resetDatabase(prisma: PrismaService, redis: Redis): Promise<void> {
+  await truncateAllTables(prisma);
+  await redis.flushdb();
+}
+
+/**
+ * Поднимает приложение поверх ОБЩИХ контейнеров e2e-прогона (SLT-48): их адреса публикует
+ * globalSetup через process.env (см. shared-connection.ts), здесь только чтение готовых строк —
+ * ни поднятия контейнеров, ни миграций (то и другое уже сделано один раз, до старта всех файлов).
  */
 export async function startTestApp(): Promise<TestApp> {
-  const [postgres, redis]: [StartedPostgreSqlContainer, StartedRedisContainer] = await Promise.all([
-    new PostgreSqlContainer(POSTGRES_IMAGE).start(),
-    new RedisContainer(REDIS_IMAGE).start(),
-  ]);
+  const { databaseUrl, redisUrl } = readSharedConnectionStrings();
 
-  applyMigrations(postgres.getConnectionUri());
-
-  const config = validateEnv(buildTestEnv(postgres.getConnectionUri(), redis.getConnectionUrl()));
+  const config = validateEnv(buildTestEnv(databaseUrl, redisUrl));
 
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule.forRoot(config)],
@@ -163,35 +154,12 @@ export async function startTestApp(): Promise<TestApp> {
 
     createAgent: () => request.agent(httpServer),
 
-    /**
-     * Между тестами чистятся ДВА хранилища, и пропуск любого даёт свой характерный провал.
-     *
-     * 1. Таблицы — иначе повторный прогон падает на «email занят» в тесте регистрации:
-     *    пользователь остался от прошлого раза. Именно это делает прогон неповторяемым.
-     * 2. Redis (flushdb) — снимает разом ДВЕ вещи из одной базы:
-     *    - сессии: иначе тест «без куки → 401» рискует пройти по чужой валидной сессии;
-     *    - счётчики throttler'а: лимиты боевые (register 3/час, login 5/15 мин), приложение
-     *      поднято ОДНО на весь файл, IP у supertest всегда один — без сброса четвёртый по
-     *      счёту register получил бы 429, и упал бы не тот тест, что сломал, а тот, кому не
-     *      повезло идти четвёртым. Счётчики живут в том же Redis (SLT-29, storage → Redis),
-     *      поэтому flushdb чистит и их; отдельный вызов больше не нужен.
-     *
-     * Чистится именно хранилище, а не подменяется guard: подменённый guard означал бы, что
-     * throttling в e2e не проверяется вообще и его поломку никто не заметит.
-     */
-    reset: async () => {
-      await prisma.$executeRawUnsafe(TRUNCATE_ALL_SQL);
-      await redisClient.flushdb();
-    },
+    reset: () => resetDatabase(prisma, redisClient),
 
-    /**
-     * Порядок обратный запуску: сначала приложение (его onModuleDestroy закрывает пул
-     * Prisma и коннект ioredis), потом контейнеры. Погасив контейнеры первыми, мы бы
-     * оставили клиентов закрываться в мёртвую сеть — это висящие таймауты на выходе.
-     */
+    // Контейнеры не гасим: они общие на весь прогон, их закрывает globalTeardown уже после
+    // того, как отработают afterAll всех файлов.
     stop: async () => {
       await app.close();
-      await Promise.all([postgres.stop(), redis.stop()]);
     },
   };
 }

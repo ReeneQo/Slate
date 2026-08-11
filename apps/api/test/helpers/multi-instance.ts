@@ -2,22 +2,17 @@ import type { AddressInfo } from 'node:net';
 
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
-import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
 import request from 'supertest';
 
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/bootstrap/configure-app';
 import { validateEnv } from '../../src/config/env.validation';
+import { PrismaService } from '../../src/infrastructure/prisma/prisma.service';
+import { RedisService } from '../../src/infrastructure/redis/redis.service';
 import { RealtimeGateway } from '../../src/modules/realtime/realtime.gateway';
 import type { AppServer } from '../../src/modules/realtime/realtime.types';
-import {
-  applyMigrations,
-  buildTestEnv,
-  POSTGRES_IMAGE,
-  REDIS_IMAGE,
-  TEST_SESSION_COOKIE_NAME,
-} from './test-app';
+import { readSharedConnectionStrings } from './shared-connection';
+import { buildTestEnv, resetDatabase, TEST_SESSION_COOKIE_NAME } from './test-app';
 
 /**
  * Двух-инстансное окружение под e2e Redis-адаптера socket.io (SLT-34).
@@ -32,8 +27,9 @@ import {
  *
  * В отличие от startTestApp, приложения именно СЛУШАЮТ порт (listen(0), случайный свободный): к ним
  * подключается настоящий socket.io-client по сети, а не supertest поверх in-memory сервера.
- * Контейнерные примитивы (образы, миграции, сборка env) переиспользуются из test-app — один
- * источник, чтобы окружение e2e не разъехалось между хелперами.
+ * Контейнеры здесь не поднимаются вовсе (SLT-48) — используются общие, поднятые globalSetup на
+ * весь e2e-прогон; connection-строки читаются той же readSharedConnectionStrings, что и в
+ * startTestApp — один источник, чтобы окружение e2e не разъехалось между хелперами.
  */
 
 /** Готовое к тесту двух-инстансное окружение. */
@@ -54,7 +50,12 @@ export interface TwoInstanceApps {
    * Только через HTTP: сокету нужна ровно та кука, что выписывает настоящий вход.
    */
   createMemberAndBoard(): Promise<{ cookie: string; boardId: string }>;
-  /** Закрыть оба приложения и погасить контейнеры. Порядок: приложения → контейнеры. */
+  /**
+   * Сброс состояния между тестами — тот же resetDatabase, что у test-app (SLT-48): общий хук
+   * изоляции для всех e2e, а не свой truncate/flushdb здесь.
+   */
+  reset(): Promise<void>;
+  /** Закрыть оба приложения. Контейнеры общие на весь прогон — их гасит globalTeardown. */
   stop(): Promise<void>;
 }
 
@@ -105,21 +106,19 @@ function extractSessionCookie(setCookie: string[] | undefined): string {
 }
 
 export async function startTwoInstanceApps(): Promise<TwoInstanceApps> {
-  const [postgres, redis]: [StartedPostgreSqlContainer, StartedRedisContainer] = await Promise.all([
-    new PostgreSqlContainer(POSTGRES_IMAGE).start(),
-    new RedisContainer(REDIS_IMAGE).start(),
-  ]);
+  const { databaseUrl, redisUrl } = readSharedConnectionStrings();
 
-  applyMigrations(postgres.getConnectionUri());
+  const config = validateEnv(buildTestEnv(databaseUrl, redisUrl));
 
-  const config = validateEnv(buildTestEnv(postgres.getConnectionUri(), redis.getConnectionUrl()));
-
-  // Инстансы стартуют последовательно: миграции уже накатаны, но оба слушают порт и дёргают Redis —
-  // на слабой машине параллельный listen двух приложений ничего не ускоряет, а логи путает.
+  // Инстансы стартуют последовательно: миграции уже накатаны (globalSetup), но оба слушают
+  // порт и дёргают Redis — на слабой машине параллельный listen двух приложений ничего не
+  // ускоряет, а логи путает.
   const app1 = await startInstance(config);
   const app2 = await startInstance(config);
 
   const server1 = app1.get(RealtimeGateway).server;
+  const prisma = app1.get(PrismaService);
+  const redisClient = app1.get(RedisService).client;
 
   return {
     url1: instanceUrl(app1),
@@ -143,12 +142,14 @@ export async function startTwoInstanceApps(): Promise<TwoInstanceApps> {
       return { cookie, boardId: (board.body as { id: string }).id };
     },
 
+    // app1 и app2 — два DI-контейнера поверх ОДНОГО Postgres/Redis: truncate/flushdb через
+    // клиенты app1 виден обоим инстансам, второй набор клиентов заводить незачем.
+    reset: () => resetDatabase(prisma, redisClient),
+
     stop: async () => {
-      // Приложения первыми: их onModuleDestroy закрывает Prisma, ioredis и pub/sub-соединения,
-      // пока Redis ещё жив. Погасив контейнер раньше, оставили бы клиентов закрываться в мёртвую
-      // сеть — висящие таймауты и open handles на выходе Jest.
+      // Приложения закрываем: их onModuleDestroy закрывает Prisma, ioredis и pub/sub-соединения.
+      // Контейнеры не гасим — они общие на весь прогон, их закрывает globalTeardown.
       await Promise.all([app1.close(), app2.close()]);
-      await Promise.all([postgres.stop(), redis.stop()]);
     },
   };
 }
