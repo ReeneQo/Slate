@@ -43,3 +43,17 @@ export function logout(): Promise<void> {
 export function getMe(): Promise<UserResponse> {
   return request<UserResponse>(AUTH_ENDPOINTS.me);
 }
+
+/** Ответ `GET /auth/oauth/connect/:provider` — вне `@slate/shared-types`: пара `{ url }`
+ *  без валидации не тянет на контракт, который стоит держать в общем пакете. */
+export interface OAuthConnectResponse {
+  url: string;
+}
+
+/**
+ * Authorize-URL GitHub для входа гостя (SLT-52). Роут публичный (без сессии), поэтому
+ * `suppressUnauthorized` не нужен — эндпоинт 401 не отдаёт.
+ */
+export function getOAuthConnectUrl(provider = 'github'): Promise<OAuthConnectResponse> {
+  return request<OAuthConnectResponse>(AUTH_ENDPOINTS.oauthConnect(provider));
+}

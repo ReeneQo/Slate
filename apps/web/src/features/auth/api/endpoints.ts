@@ -8,4 +8,6 @@ export const AUTH_ENDPOINTS = {
   register: '/auth/register',
   logout: '/auth/logout',
   me: '/auth/me',
+  /** `GET /auth/oauth/connect/:provider` — authorize-URL для входа через провайдера (SLT-52). */
+  oauthConnect: (provider: string): string => `/auth/oauth/connect/${provider}`,
 } as const;
