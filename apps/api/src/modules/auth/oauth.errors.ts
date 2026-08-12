@@ -43,3 +43,35 @@ export class EmailConflictError extends Error {
     this.name = 'EmailConflictError';
   }
 }
+
+/**
+ * Привязка (SLT-56, `OAuthService.linkProfile`): (provider, providerAccountId) уже привязан
+ * к ДРУГОМУ пользователю. К ТОМУ ЖЕ пользователю — не ошибка (см. докстринг linkProfile,
+ * идемпотентный no-op).
+ */
+export class ProviderAlreadyLinkedError extends Error {
+  constructor() {
+    super('Этот аккаунт GitHub уже привязан к другому пользователю');
+    this.name = 'ProviderAlreadyLinkedError';
+  }
+}
+
+/** Отвязка (`OAuthService.unlinkProfile`) провайдера, которого у пользователя нет. */
+export class AccountNotLinkedError extends Error {
+  constructor() {
+    super('Этот способ входа не привязан к вашему аккаунту');
+    this.name = 'AccountNotLinkedError';
+  }
+}
+
+/**
+ * Отвязка последнего способа входа без пароля (`OAuthService.unlinkProfile`): у пользователя
+ * нет `passwordHash`, а отвязываемый Account — единственный. Текст намеренно не обещает
+ * «сначала задайте пароль» — эндпоинта смены/установки пароля без OAuth ещё нет в UI.
+ */
+export class LastAuthMethodError extends Error {
+  constructor() {
+    super('Нельзя отвязать единственный способ входа в аккаунт');
+    this.name = 'LastAuthMethodError';
+  }
+}
