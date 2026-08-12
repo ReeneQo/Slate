@@ -10,11 +10,18 @@ import type { SafeUser } from '../user/entities/user.entity';
 import { EmailAlreadyTakenError } from '../user/user.errors';
 import { UserService } from '../user/user.service';
 import { AccountRepository } from './account.repository';
-import { EmailConflictError, OAuthEmailNotVerifiedError, OAuthNoEmailError } from './oauth.errors';
+import {
+  AccountNotLinkedError,
+  EmailConflictError,
+  LastAuthMethodError,
+  OAuthEmailNotVerifiedError,
+  OAuthNoEmailError,
+  ProviderAlreadyLinkedError,
+} from './oauth.errors';
 import type { OAuthProvider } from './providers/oauth-provider';
 import { OAuthProviderRegistry } from './providers/oauth-provider.registry';
 import { OAuthStateService } from './providers/oauth-state.service';
-import type { NormalizedProfile } from './providers/types';
+import type { NormalizedProfile, OAuthMode } from './providers/types';
 
 /**
  * OAuth-хендшейк ДО резолва входа: выдача authorize-URL и обмен code→нормализованный
@@ -45,15 +52,16 @@ export class OAuthService {
   ) {}
 
   /**
-   * Выдаёт authorize-URL для входа. Режим здесь всегда `'login'` — вход в приложение;
-   * `mode='link'` (привязка провайдера к существующему аккаунту) появится в SLT-56 отдельным
-   * эндпоинтом, не этим.
+   * Выдаёт authorize-URL. `mode` по умолчанию `'login'` (вход в приложение) — единственный
+   * вызывающий до SLT-56 (`AuthController.connectOAuth`) явно его не передавал. `mode='link'`
+   * (SLT-56, привязка провайдера к уже залогиненному пользователю) — свой, отдельный роут
+   * `oauth/link/connect/:provider`, а не смена поведения этого.
    */
-  async getConnectUrl(providerName: string): Promise<{ url: string }> {
+  async getConnectUrl(providerName: string, mode: OAuthMode = 'login'): Promise<{ url: string }> {
     const provider = this.getProviderOrThrow(providerName);
-    const state = await this.state.create(providerName, 'login');
+    const state = await this.state.create(providerName, mode);
 
-    return { url: provider.getAuthUrl(state, 'login') };
+    return { url: provider.getAuthUrl(state, mode) };
   }
 
   /**
@@ -63,16 +71,23 @@ export class OAuthService {
    * предъявлен на callback другого. Ответ на оба случая — один и тот же 401 без деталей,
    * иначе различие в сообщении само стало бы утечкой (подтверждало бы существование
    * настоящего state под другим провайдером).
+   *
+   * `expectedMode` (SLT-56) — та же логика для режима: login-callback обязан принимать ТОЛЬКО
+   * state, выпущенный под `'login'`, link-callback — только под `'link'`. Без этой сверки
+   * login-state, украденный/подсунутый в link-callback, привязал бы GitHub-аккаунт злоумышленника
+   * к сессии жертвы (и наоборот — link-state в login-callback обошёл бы саму идею линковки).
+   * Единый 401 без уточнения причины — по той же причине, что и провал сверки provider выше.
    */
   async resolveProfile(
     providerName: string,
     code: string,
     state: string,
+    expectedMode: OAuthMode,
   ): Promise<NormalizedProfile> {
     const provider = this.getProviderOrThrow(providerName);
     const stored = await this.state.consume(state);
 
-    if (stored === null || stored.provider !== providerName) {
+    if (stored === null || stored.provider !== providerName || stored.mode !== expectedMode) {
       throw new UnauthorizedException('Недействительный или истёкший state');
     }
 
@@ -170,6 +185,80 @@ export class OAuthService {
 
       throw error;
     }
+  }
+
+  /**
+   * Привязка провайдера к УЖЕ залогиненному пользователю (SLT-56) — принципиально ОТДЕЛЬНАЯ
+   * логика от `loginOAuth`. Игнорирует `profile.email` целиком: не ищет и не создаёт User, не
+   * гейтит на `emailVerified` — тот email принадлежит провайдер-аккаунту, а не решению
+   * «к какому Slate-пользователю привязать» (это уже решено — им является `userId` из сессии).
+   * Работает ТОЛЬКО с парой (provider, providerAccountId) + переданным userId.
+   *
+   * Идемпотентна: повторная привязка уже привязанного (к ТОМУ ЖЕ userId) провайдера —
+   * успешный no-op, а не ошибка (повторный клик на «Привязать GitHub» не должен падать).
+   * К ДРУГОМУ userId — конфликт.
+   *
+   * Гонка (два параллельных link-callback на один providerAccountId) резолвится так же, как в
+   * loginOAuth: `AccountRepository.createForUser` ловит P2002 и перечитывает запись
+   * (`already-linked`). Здесь эта ветка ветвится ещё раз по userId — от неё, а не от 500,
+   * зависит финальный результат.
+   */
+  async linkProfile(userId: string, profile: NormalizedProfile): Promise<void> {
+    const existing = await this.accountRepository.findByProviderAccount(
+      profile.provider,
+      profile.providerAccountId,
+    );
+
+    if (existing) {
+      if (existing.userId === userId) {
+        return;
+      }
+
+      throw new ProviderAlreadyLinkedError();
+    }
+
+    const outcome = await this.accountRepository.createForUser(
+      userId,
+      profile.provider,
+      profile.providerAccountId,
+    );
+
+    if (outcome.status === 'already-linked' && outcome.account.userId !== userId) {
+      throw new ProviderAlreadyLinkedError();
+    }
+  }
+
+  /**
+   * Отвязка провайдера от уже залогиненного пользователя (SLT-56).
+   *
+   * Порядок проверок важен: сначала убеждаемся, что вообще есть что отвязывать (иначе
+   * `hasPassword`/`countByUser` считались бы напрасно), потом защита «последнего способа
+   * входа» — БЕЗ пароля отвязать единственный Account нельзя, иначе пользователю нечем будет
+   * войти. `accountsCount` считается ДО удаления и включает сам отвязываемый Account, поэтому
+   * `<= 1` значит «это последний, и пароля тоже нет». Если пароль есть, отвязать можно всегда —
+   * сам пароль остаётся способом входа.
+   */
+  async unlinkProfile(userId: string, provider: string): Promise<void> {
+    const targetAccount = await this.accountRepository.findByUserAndProvider(userId, provider);
+
+    if (targetAccount === null) {
+      throw new AccountNotLinkedError();
+    }
+
+    const user = await this.userService.findByIdWithHash(userId);
+
+    if (user === null) {
+      throw new InternalServerErrorException('Сессия ссылается на несуществующего пользователя');
+    }
+
+    const hasPassword = this.userService.hasPassword(user);
+    const accountsCount = await this.accountRepository.countByUser(userId);
+
+    if (!hasPassword && accountsCount <= 1) {
+      throw new LastAuthMethodError();
+    }
+
+    await this.accountRepository.deleteByUserAndProvider(userId, provider);
   }
 
   private getProviderOrThrow(providerName: string): OAuthProvider {

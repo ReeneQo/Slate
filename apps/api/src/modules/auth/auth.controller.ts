@@ -1,10 +1,13 @@
 import {
   BadGatewayException,
   Body,
+  ConflictException,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Param,
   Post,
   Query,
@@ -23,7 +26,14 @@ import { AuthService } from './auth.service';
 import type { AuthUserDto } from './dto/auth-user.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
-import { EmailConflictError, OAuthEmailNotVerifiedError, OAuthNoEmailError } from './oauth.errors';
+import {
+  AccountNotLinkedError,
+  EmailConflictError,
+  LastAuthMethodError,
+  OAuthEmailNotVerifiedError,
+  OAuthNoEmailError,
+  ProviderAlreadyLinkedError,
+} from './oauth.errors';
 import { OAuthService } from './oauth.service';
 import { SessionsService } from './sessions/sessions.service';
 
@@ -213,7 +223,7 @@ export class AuthController {
     }
 
     try {
-      const profile = await this.oauthService.resolveProfile(provider, code, state);
+      const profile = await this.oauthService.resolveProfile(provider, code, state, 'login');
       const user = await this.oauthService.loginOAuth(profile);
 
       await this.sessionsService.saveSession(request, user);
@@ -221,6 +231,96 @@ export class AuthController {
       response.redirect(`${origin}/`);
     } catch (error) {
       response.redirect(`${origin}/login?error=${mapOAuthErrorToCode(error)}`);
+    }
+  }
+
+  /**
+   * Выдаёт authorize-URL GitHub для ПРИВЯЗКИ провайдера к уже залогиненному пользователю
+   * (SLT-56) — отдельный роут от `oauth/connect/:provider` (тот всегда `mode='login'`, SLT-52).
+   * `@Authorization()`: линковка без сессии не имеет смысла — привязывать провайдера НЕКУДА.
+   */
+  @Get('oauth/link/connect/:provider')
+  @Authorization()
+  @Throttle({ default: OAUTH_CONNECT_THROTTLE })
+  connectOAuthLink(@Param('provider') provider: string): Promise<{ url: string }> {
+    return this.oauthService.getConnectUrl(provider, 'link');
+  }
+
+  /**
+   * Callback линковки (SLT-56) — ОТДЕЛЬНЫЙ роут от `oauth/callback/:provider` (тот login,
+   * SLT-54, его не трогаем). Та же форма ответа (redirect, `@Res()` без `passthrough` — см.
+   * докстринг `oauthCallback`), но своя логика резолва: `resolveProfile(..., 'link')` (сверка
+   * mode отклонит login-state) и `linkProfile`, а не `loginOAuth` — сессию линковка не трогает,
+   * пользователь уже вошёл.
+   *
+   * `@Authorization()` обязателен: `userId` для `linkProfile` берётся из СЕССИИ (см.
+   * `Authorized`-декоратор), а не из state/профиля — иначе привязка происходила бы «от имени
+   * гостя», для кого угодно.
+   *
+   * Целевая страница после успеха — временный дашборд (`/?linked=github`): куда именно вести
+   * пользователя (страница профиля) уточнит SLT-58, здесь такой страницы ещё нет.
+   */
+  @Get('oauth/link/callback/:provider')
+  @Authorization()
+  @Throttle({ default: OAUTH_CALLBACK_THROTTLE })
+  async oauthLinkCallback(
+    @Param('provider') provider: string,
+    @Query('code') code: string | undefined,
+    @Query('state') state: string | undefined,
+    @Authorized('id') userId: string,
+    @Res() response: Response,
+  ): Promise<void> {
+    const origin = this.config.app.allowedOrigin;
+
+    if (!code || !state) {
+      response.redirect(`${origin}/?error=oauthFailed`);
+      return;
+    }
+
+    try {
+      const profile = await this.oauthService.resolveProfile(provider, code, state, 'link');
+
+      await this.oauthService.linkProfile(userId, profile);
+
+      response.redirect(`${origin}/?linked=github`);
+    } catch (error) {
+      response.redirect(`${origin}/?error=${mapOAuthLinkErrorToCode(error)}`);
+    }
+  }
+
+  /**
+   * Отвязка провайдера (SLT-56). JSON-ответ, НЕ redirect: вызывается обычным XHR с фронта
+   * (кнопка «Отвязать» в профиле, SLT-58), а не браузерной навигацией — в отличие от
+   * link/callback, сюда не приходят через `window.location`.
+   *
+   * 204 No Content — тот же стиль, что и у `BoardController.remove`/`ElementController` DELETE:
+   * отдавать нечего, а `{ success: true }` было бы полем, дублирующим то, что уже сказал статус.
+   *
+   * Доменные ошибки (`AccountNotLinkedError`/`LastAuthMethodError`) переводятся в HTTP здесь же,
+   * а не проброшены как есть — тот же приём, что `AuthService.createUser` для
+   * `EmailAlreadyTakenError`: перевод живёт рядом с местом, где ошибка возникает по сценарию,
+   * а не размазан по сервису, который её бросает.
+   */
+  @Delete('oauth/link/unlink/:provider')
+  @Authorization()
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Throttle({ default: OAUTH_CALLBACK_THROTTLE })
+  async unlinkOAuth(
+    @Param('provider') provider: string,
+    @Authorized('id') userId: string,
+  ): Promise<void> {
+    try {
+      await this.oauthService.unlinkProfile(userId, provider);
+    } catch (error) {
+      if (error instanceof AccountNotLinkedError) {
+        throw new NotFoundException(error.message);
+      }
+
+      if (error instanceof LastAuthMethodError) {
+        throw new ConflictException(error.message);
+      }
+
+      throw error;
     }
   }
 }
@@ -252,6 +352,27 @@ function mapOAuthErrorToCode(error: unknown): string {
   // UnauthorizedException — недействительный/истёкший/подменённый state (SLT-52).
   // BadGatewayException — GitHub недоступен на обмене code→token или на fetchProfile.
   // Оба — сбой самого OAuth-хендшейка, не наша внутренняя ошибка, поэтому один код.
+  if (error instanceof UnauthorizedException || error instanceof BadGatewayException) {
+    return 'oauthFailed';
+  }
+
+  return 'serverError';
+}
+
+/**
+ * Перевод ошибки резолва ЛИНКОВКИ (`oauthLinkCallback`) в код для `?error=`. Отдельная функция
+ * от `mapOAuthErrorToCode`: наборы ошибок не пересекаются (`linkProfile` не бросает
+ * `OAuthNoEmailError`/`OAuthEmailNotVerifiedError`/`EmailConflictError` — линковка не работает
+ * с email, см. докстринг `OAuthService.linkProfile`), а `ProviderAlreadyLinkedError` для
+ * login-резолва не существует вовсе.
+ */
+function mapOAuthLinkErrorToCode(error: unknown): string {
+  if (error instanceof ProviderAlreadyLinkedError) {
+    return 'alreadyLinked';
+  }
+
+  // UnauthorizedException — недействительный/истёкший state ИЛИ провал mode-сверки (login-state
+  // подсунут в link-callback). BadGatewayException — GitHub недоступен на обмене/fetchProfile.
   if (error instanceof UnauthorizedException || error instanceof BadGatewayException) {
     return 'oauthFailed';
   }
