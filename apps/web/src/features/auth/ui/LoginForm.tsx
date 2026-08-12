@@ -10,6 +10,8 @@ import { mapLoginError } from '../lib/mapAuthError';
 import { signIn } from '../model/session';
 import { AuthCard } from './AuthCard';
 import { FormField } from './FormField';
+import { OAuthGithubButton } from './OAuthGithubButton';
+import { OAuthLoginNotice } from './OAuthLoginNotice';
 
 /**
  * Форма логина: react-hook-form + zodResolver со схемой из контракта (@slate/shared-types) —
@@ -49,6 +51,7 @@ export function LoginForm(): ReactElement {
         </>
       }
     >
+      <OAuthLoginNotice />
       <form onSubmit={(event) => void onSubmit(event)} noValidate>
         <FormField
           label="Email"
@@ -77,6 +80,12 @@ export function LoginForm(): ReactElement {
           {isSubmitting ? 'Вход…' : 'Войти'}
         </button>
       </form>
+      <div className="my-4 flex items-center gap-3 text-xs text-[#272d36]/40">
+        <span className="h-px flex-1 bg-black/10" />
+        или
+        <span className="h-px flex-1 bg-black/10" />
+      </div>
+      <OAuthGithubButton />
     </AuthCard>
   );
 }

@@ -5,4 +5,4 @@
 export { useAuthStore } from './model/auth.store';
 export { signOut } from './model/session';
 export { useAuthBootstrap } from './model/useAuthBootstrap';
-export { LoginForm, RegisterForm, RequireAuth, RequireGuest } from './ui';
+export { LoginForm, OAuthLinkNotice, RegisterForm, RequireAuth, RequireGuest } from './ui';
