@@ -44,6 +44,39 @@ export class AccountRepository {
   }
 
   /**
+   * Привязка провайдера у КОНКРЕТНОГО пользователя (SLT-56): ищет по (userId, provider), а не
+   * по (provider, providerAccountId), как `findByProviderAccount`. Нужен unlink'у (что именно
+   * отвязываем) и идемпотентной проверке в `OAuthService.linkProfile` — то есть в отличие от
+   * `findByProviderAccount`, здесь всегда известен userId и интересует именно ЕГО привязка.
+   */
+  findByUserAndProvider(userId: string, provider: string): Promise<AccountEntity | null> {
+    return this.prisma.account.findFirst({
+      where: { userId, provider },
+      select: ACCOUNT_SELECT,
+    });
+  }
+
+  /**
+   * Сколько провайдеров привязано к пользователю — защита «последнего способа входа»
+   * (`OAuthService.unlinkProfile`): без пароля отвязывать последний Account нельзя, иначе
+   * входить будет нечем.
+   */
+  countByUser(userId: string): Promise<number> {
+    return this.prisma.account.count({ where: { userId } });
+  }
+
+  /**
+   * Отвязка. `deleteMany`, а не `delete`: у модели нет unique-constraint на (userId, provider)
+   * по отдельности (только на (provider, providerAccountId)), поэтому `delete` потребовал бы
+   * составного unique-ключа, которого в схеме нет. Идемпотентно по конструкции — `deleteMany`
+   * по несуществующей паре просто ничего не удаляет, а не бросает; вызывающий (`unlinkProfile`)
+   * уже проверил существование через `findByUserAndProvider` до вызова.
+   */
+  async deleteByUserAndProvider(userId: string, provider: string): Promise<void> {
+    await this.prisma.account.deleteMany({ where: { userId, provider } });
+  }
+
+  /**
    * Привязывает провайдера к пользователю: новый вход (ветка 3) или автолинковка к
    * существующему аккаунту по verified-email (ветка 2).
    *
