@@ -11,6 +11,7 @@ import { signIn } from '../model/session';
 import { AuthCard } from './AuthCard';
 import { FormField } from './FormField';
 import { OAuthGithubButton } from './OAuthGithubButton';
+import { OAuthLoginNotice } from './OAuthLoginNotice';
 
 /**
  * Форма логина: react-hook-form + zodResolver со схемой из контракта (@slate/shared-types) —
@@ -50,6 +51,7 @@ export function LoginForm(): ReactElement {
         </>
       }
     >
+      <OAuthLoginNotice />
       <form onSubmit={(event) => void onSubmit(event)} noValidate>
         <FormField
           label="Email"

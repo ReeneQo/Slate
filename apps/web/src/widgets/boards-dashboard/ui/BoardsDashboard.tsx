@@ -1,7 +1,7 @@
 import { type ReactElement, useState } from 'react';
 
 import type { BoardListItem } from '@/entities/board';
-import { signOut, useAuthStore } from '@/features/auth';
+import { OAuthLinkNotice, signOut, useAuthStore } from '@/features/auth';
 import { BoardList } from '@/features/board-list';
 import { ShareDialog } from '@/features/board-sharing';
 
@@ -33,6 +33,7 @@ export function BoardsDashboard(): ReactElement {
           Выйти
         </button>
       </header>
+      <OAuthLinkNotice />
       <main className="mx-auto max-w-2xl px-6 py-8">
         <BoardList onShare={setBoardToShare} />
       </main>
