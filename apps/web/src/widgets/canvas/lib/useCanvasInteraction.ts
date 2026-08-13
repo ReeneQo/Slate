@@ -225,6 +225,9 @@ export function useCanvasInteraction(nodeMap: RefObject<Map<string, Node>>): Can
   const onDragStart = useCallback(
     (e: KonvaEventObject<DragEvent>): void => {
       setIsDraggingShape(true);
+      // Параллельно локальному state (SLT-65) — editor-стор нужен гварду undo/redo/delete хоткеев,
+      // который не подписан на этот хук и читает жест через getState() (см. editor.store).
+      useEditorStore.getState().setDraggingElement(true);
       groupDrag.onDragStart(e);
     },
     [groupDrag],
@@ -238,6 +241,7 @@ export function useCanvasInteraction(nodeMap: RefObject<Map<string, Node>>): Can
   const onDragEnd = useCallback(
     (e: KonvaEventObject<DragEvent>): void => {
       setIsDraggingShape(false);
+      useEditorStore.getState().setDraggingElement(false);
       groupDrag.onDragEnd(e);
     },
     [groupDrag],

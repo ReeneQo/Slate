@@ -1,56 +1,104 @@
 import { useEffect } from 'react';
 
-import { useDocumentStore } from '@/entities/canvas-element';
+import { useDocumentStore, useHistoryStore } from '@/entities/canvas-element';
 import { isEditableTarget } from '@/shared/lib/dom';
 
 import { useEditorStore } from '../model/editor.store';
 
 /**
- * Единая точка клавиатурного ввода холста. Один window-listener, внутри — роутинг
- * клавиш по действиям. Симметричен useDrawing/useSelection/useCanvasInteraction:
- * ещё один контроллер ввода уровня виджета, только клавиатурный.
+ * Одно правило клавиатурного хоткея холста: `match` решает, откликается ли событие, `run`
+ * выполняет действие (сам решает, нужен ли `preventDefault` — см. Delete/Backspace ниже, где
+ * это зависит от того, было ли что удалять).
+ */
+interface HotkeyRule {
+  match: (event: KeyboardEvent) => boolean;
+  run: (event: KeyboardEvent) => void;
+}
+
+/** Delete/Backspace БЕЗ модификаторов — с модификатором (напр. Ctrl+Backspace) правило не матчится. */
+export function matchesDelete(event: KeyboardEvent): boolean {
+  return (event.key === 'Delete' || event.key === 'Backspace') && !event.metaKey && !event.ctrlKey;
+}
+
+/** Undo — кроссплатформенно: Cmd (Mac) или Ctrl (Win/Linux) + Z, БЕЗ Shift. */
+export function matchesUndo(event: KeyboardEvent): boolean {
+  return (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z' && !event.shiftKey;
+}
+
+/** Redo — Cmd/Ctrl+Shift+Z (кроссплатформенно) ИЛИ Ctrl+Y (Windows-конвенция). */
+export function matchesRedo(event: KeyboardEvent): boolean {
+  const key = event.key.toLowerCase();
+  return (event.metaKey || event.ctrlKey) && ((event.shiftKey && key === 'z') || key === 'y');
+}
+
+const rules: HotkeyRule[] = [
+  {
+    match: matchesDelete,
+    run: (event) => {
+      const { selectedElementIds, setSelectedElementIds, canEdit } = useEditorStore.getState();
+      if (selectedElementIds.length === 0) return; // нечего удалять — не гасим клавишу
+      // Роль-гейт (SLT-43): viewer выделяет (для просмотра), но не удаляет — выделение
+      // остаётся активным (см. editor.store), удаление гасится здесь же, отдельным условием.
+      if (!canEdit) return;
+
+      // preventDefault: без фокуса на поле Backspace листает историю браузера («назад»).
+      event.preventDefault();
+
+      // Документ и выделение — в разных сторах (entities vs widget), одним атомарным set их не
+      // свести. deleteElements чистит elements+elementIds атомарно (и пишет инверсию в историю,
+      // SLT-65); выделение (сессионное UI-состояние) гасим здесь явно.
+      useDocumentStore.getState().deleteElements(selectedElementIds);
+      setSelectedElementIds([]);
+    },
+  },
+  {
+    match: matchesUndo,
+    run: (event) => {
+      event.preventDefault();
+      useHistoryStore.getState().undo();
+    },
+  },
+  {
+    match: matchesRedo,
+    run: (event) => {
+      event.preventDefault();
+      useHistoryStore.getState().redo();
+    },
+  },
+];
+
+/**
+ * Активен оверлей или незавершённый жест холста (SLT-65, П8) — undo/redo/delete не должны
+ * перехватывать клавишу: в text-оверлее (`editingTextId`/`draft`) должен работать НАТИВНЫЙ undo
+ * текста, посреди marquee/drag клавиатурная мутация документа была бы преждевременной.
+ */
+function isCanvasGestureActive(): boolean {
+  const { editingTextId, draft, marqueeRect, isDraggingElement } = useEditorStore.getState();
+  return editingTextId !== null || draft !== null || marqueeRect !== null || isDraggingElement;
+}
+
+/**
+ * Единая точка клавиатурного ввода холста. Один window-listener, внутри — массив правил
+ * `{match, run}` (SLT-65, рефактор switch→rules: первый хоткей с модификатором — undo/redo —
+ * потребовал комбинаций, которые неудобно было бы наращивать в плоском switch по event.key).
+ * Симметричен useDrawing/useSelection/useCanvasInteraction: ещё один контроллер ввода уровня
+ * виджета, только клавиатурный.
  *
- * Сейчас наполнен одним действием — Delete/Backspace удаляет выделение. Задел под
- * рост: инструменты (V/R/O/L), undo (Ctrl+Z), копипаст добавляются новой веткой
- * в switch — listener, cleanup и guard на поля ввода уже общие.
- *
- * NOTE: switch по event.key намеренно оставлен простым (YAGNI — комбо с
- * модификаторами ещё нет). При добавлении первого хоткея с модификатором
- * (undo/копипаст) — пересмотреть на массив правил { match(e), run() }.
- *
- * Стор читаем через getState() в момент события (не через подписку): listener
- * ставится один раз, а свежее выделение нужно только когда клавиша уже нажата.
+ * Стор читаем через getState() в момент события (не через подписку): listener ставится один
+ * раз, а свежее состояние нужно только когда клавиша уже нажата.
  */
 export function useCanvasHotkeys(): void {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
-      // Guard заложен сразу: не мешаем вводу текста ещё до появления текстовых фигур.
+      // Guard заложен сразу: не мешаем вводу текста и незавершённым жестам холста.
       if (isEditableTarget(event.target)) return;
+      if (isCanvasGestureActive()) return;
 
-      switch (event.key) {
-        case 'Delete':
-        case 'Backspace': {
-          const { selectedElementIds, setSelectedElementIds, canEdit } = useEditorStore.getState();
-          if (selectedElementIds.length === 0) return; // нечего удалять — не гасим клавишу
-          // Роль-гейт (SLT-43): viewer выделяет (для просмотра), но не удаляет — выделение
-          // остаётся активным (см. editor.store), удаление гасится здесь же, отдельным условием.
-          if (!canEdit) return;
-
-          // preventDefault: без фокуса на поле Backspace листает историю браузера («назад»).
-          event.preventDefault();
-
-          // Документ и выделение — в разных сторах (entities vs widget), одним
-          // атомарным set их не свести. deleteElements чистит elements+elementIds
-          // атомарно; выделение (сессионное UI-состояние) гасим здесь явно.
-          // NOTE: путь удаления пока один. Когда их станет >1 (контекстное меню,
-          // программное удаление, undo) — вынести сброс выделения в прунинг-подписку
-          // editor↔document, чтобы очистка была в одной точке.
-          useDocumentStore.getState().deleteElements(selectedElementIds);
-          setSelectedElementIds([]);
-          break;
+      for (const rule of rules) {
+        if (rule.match(event)) {
+          rule.run(event);
+          return; // первое сматчившееся правило — правила взаимоисключающие по конструкции
         }
-        default:
-          break;
       }
     };
 
