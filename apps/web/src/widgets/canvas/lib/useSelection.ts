@@ -18,9 +18,14 @@ export const HIT_PADDING_PX = 8;
 export interface SelectionController {
   /**
    * Клик в select-режиме: выделяет верхнюю фигуру под курсором или снимает выделение.
-   * Возвращает id выделенной фигуры (или null) — вызывающий стартует по нему drag.
+   * Возвращает id выделенной фигуры (или null) — вызывающий стартует по нему drag/marquee.
+   *
+   * shiftKey (SLT-64): true → toggle найденного id в текущем выделении (добавить/убрать), не
+   * заменяя остальное; клик по пустому месту с shift — no-op (выделение не трогаем, вызывающий
+   * решает, что делать дальше — см. useCanvasInteraction, marquee игнорирует shift по тому же
+   * принципу). false (обычный клик) — прежнее поведение: заменяет выделение на [id] или [].
    */
-  selectAt: (screen: Point) => string | null;
+  selectAt: (screen: Point, shiftKey?: boolean) => string | null;
   /** Верхняя фигура под указателем или null. Чистый запрос без записи в стор (для hover). */
   findAt: (screen: Point) => string | null;
 }
@@ -57,10 +62,28 @@ export function useSelection(): SelectionController {
   }, []);
 
   const selectAt = useCallback(
-    (screen: Point): string | null => {
-      // Клик по пустому месту (null) — снимаем выделение.
+    (screen: Point, shiftKey = false): string | null => {
       const id = findAt(screen);
-      setSelectedElementIds(id ? [id] : []);
+
+      if (id === null) {
+        // Клик по пустому месту без shift — снимаем выделение (прежнее поведение). С shift —
+        // намеренный no-op: пустой клик с зажатым shift ничего не значит для выделения, а
+        // вызывающий (useCanvasInteraction) на этом же id === null решает, стартовать ли marquee.
+        if (!shiftKey) setSelectedElementIds([]);
+        return null;
+      }
+
+      if (shiftKey) {
+        // Toggle: не трогаем остальное выделение, только этот id.
+        const { selectedElementIds } = useEditorStore.getState();
+        const next = selectedElementIds.includes(id)
+          ? selectedElementIds.filter((existingId) => existingId !== id)
+          : [...selectedElementIds, id];
+        setSelectedElementIds(next);
+        return id;
+      }
+
+      setSelectedElementIds([id]);
       return id;
     },
     [findAt, setSelectedElementIds],
