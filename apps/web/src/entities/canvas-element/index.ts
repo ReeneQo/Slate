@@ -16,6 +16,7 @@ export {
   updateDraftGeometry,
 } from './model/element';
 export { hitTestElement } from './model/hitTest';
+export { applyResizeTransform, type ResizeTransform } from './model/resize';
 export type {
   ArrowElement,
   BaseElement,
