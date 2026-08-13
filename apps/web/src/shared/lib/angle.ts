@@ -4,6 +4,8 @@
  * Konva/React — переиспользуется и на чтении (рендер), и на записи (onTransformEnd).
  */
 
+import type { Point } from './viewport';
+
 const RAD_TO_DEG = 180 / Math.PI;
 const DEG_TO_RAD = Math.PI / 180;
 const TWO_PI = 2 * Math.PI;
@@ -26,4 +28,22 @@ export function degToRad(deg: number): number {
  */
 export function normalizeAngle(rad: number): number {
   return ((rad % TWO_PI) + TWO_PI) % TWO_PI;
+}
+
+/**
+ * Поворачивает точку вокруг пивота на +angle (стандартная матрица поворота, тот же знак,
+ * что и у прямого поворота фигуры в модели). SLT-64: нужен для getElementBounds (крутим 4
+ * угла осевого bbox на +angle), а hitTest.ts переиспользует эту же функцию для unrotatePoint
+ * (поворот на -angle — обратное преобразование мировая→локальная точка), избегая второй копии
+ * формулы с противоположным знаком.
+ */
+export function rotatePoint(point: Point, pivot: Point, angle: number): Point {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const dx = point.x - pivot.x;
+  const dy = point.y - pivot.y;
+  return {
+    x: pivot.x + dx * cos - dy * sin,
+    y: pivot.y + dx * sin + dy * cos,
+  };
 }

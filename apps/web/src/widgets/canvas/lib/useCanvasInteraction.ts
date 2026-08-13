@@ -1,5 +1,5 @@
-import type { KonvaEventObject } from 'konva/lib/Node';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import type { KonvaEventObject, Node } from 'konva/lib/Node';
+import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 
 import { useDocumentStore } from '@/entities/canvas-element';
 import { isEditableTarget } from '@/shared/lib/dom';
@@ -7,6 +7,8 @@ import type { Point } from '@/shared/lib/viewport';
 
 import { useEditorStore } from '../model/editor.store';
 import { useDrawing } from './useDrawing';
+import { useGroupDrag } from './useGroupDrag';
+import { useMarquee } from './useMarquee';
 import { useSelection } from './useSelection';
 import { wheelToZoomFactor, zoomToPoint } from './zoom';
 
@@ -27,6 +29,7 @@ export interface CanvasInteractionHandlers {
   onMouseLeave: (e: KonvaEventObject<MouseEvent>) => void;
   // Всплывают со Stage при нативном drag узла-фигуры (Stage сам не draggable).
   onDragStart: (e: KonvaEventObject<DragEvent>) => void;
+  onDragMove: (e: KonvaEventObject<DragEvent>) => void;
   onDragEnd: (e: KonvaEventObject<DragEvent>) => void;
   /** Ре-редактирование существующего text-элемента (SLT-61, Р6) — открывает оверлей на нём. */
   onDblClick: (e: KonvaEventObject<MouseEvent>) => void;
@@ -60,10 +63,16 @@ export interface CanvasInteraction {
  *
  * Вьюпорт читаем/пишем через стор (а не локальный useState): он нужен и рисованию
  * для screen→canvas, поэтому это общее состояние редактора.
+ *
+ * nodeMap (SLT-64) — реестр живых Konva-узлов по id, заведённый в CanvasStage (нужен Transformer'у
+ * для .nodes()) и прокинутый сюда: group-drag (useGroupDrag) им же ищет узел ведущего/сиблингов по
+ * bubbled drag-событию, отдельного реестра заводить незачем.
  */
-export function useCanvasInteraction(): CanvasInteraction {
+export function useCanvasInteraction(nodeMap: RefObject<Map<string, Node>>): CanvasInteraction {
   const drawing = useDrawing();
   const { selectAt, findAt } = useSelection();
+  const marquee = useMarquee();
+  const groupDrag = useGroupDrag(nodeMap);
   const setViewport = useEditorStore((state) => state.setViewport);
   const selectedTool = useEditorStore((state) => state.selectedTool);
   const setEditingTextId = useEditorStore((state) => state.setEditingTextId);
@@ -139,18 +148,22 @@ export function useCanvasInteraction(): CanvasInteraction {
 
       if (button !== LEFT_BUTTON) return;
 
-      // Select-режим: клик ТОЛЬКО выделяет. Сам drag ведёт нативный draggable узла
-      // (Konva разводит клик от перетаскивания порогом смещения) — программный
-      // startDrag убран, из-за него фигура липла к курсору без удержания кнопки.
-      // Позицию в стор коммитит onDragEnd. Пустой клик (null) — снятие выделения.
+      // Select-режим: клик ТОЛЬКО выделяет (+ shift — toggle, SLT-64). Сам drag ведёт нативный
+      // draggable узла (Konva разводит клик от перетаскивания порогом смещения) — программный
+      // startDrag убран, из-за него фигура липла к курсору без удержания кнопки. Позицию в стор
+      // коммитит onDragEnd. Пустой клик БЕЗ shift (id === null) — снимает выделение и, поскольку
+      // это ещё и потенциальное начало тяги, стартует marquee (решится на mouseup — реальная тяга
+      // или просто клик, см. useMarquee.end и MIN_MARQUEE_SIZE). Пустой клик С shift — no-op,
+      // marquee по решению точки сверки shift игнорирует.
       if (selectedTool === 'select') {
-        selectAt(pointer);
+        const id = selectAt(pointer, e.evt.shiftKey);
+        if (id === null && !e.evt.shiftKey) marquee.start(pointer);
         return;
       }
 
       drawing.start(pointer);
     },
-    [isSpacePressed, selectedTool, selectAt, drawing],
+    [isSpacePressed, selectedTool, selectAt, marquee, drawing],
   );
 
   const onMouseMove = useCallback(
@@ -170,17 +183,23 @@ export function useCanvasInteraction(): CanvasInteraction {
         return;
       }
 
-      // Select-режим: подсвечиваем курсором фигуру под указателем (её можно тащить).
-      // findAt дёшев (O(n) на кадр без hit-canvas), а setState тем же значением
-      // React гасит без ре-рендера — курсор меняется только на границе фигуры.
+      // Select-режим: если тянем marquee (стартовала на mousedown по пустому месту) — обновляем
+      // рамку, а не hover-курсор (наведение на фигуру ПОД тянущейся рамкой сейчас не при чём).
+      // Иначе — подсвечиваем курсором фигуру под указателем (её можно тащить). findAt дёшев
+      // (O(n) на кадр без hit-canvas), а setState тем же значением React гасит без ре-рендера —
+      // курсор меняется только на границе фигуры.
       if (selectedTool === 'select') {
+        if (useEditorStore.getState().marqueeRect !== null) {
+          marquee.move(pointer);
+          return;
+        }
         setIsHoveringShape(findAt(pointer) !== null);
         return;
       }
 
       drawing.move(pointer);
     },
-    [isPanning, selectedTool, findAt, drawing, setViewport],
+    [isPanning, selectedTool, findAt, marquee, drawing, setViewport],
   );
 
   const endInteraction = useCallback((): void => {
@@ -189,7 +208,9 @@ export function useCanvasInteraction(): CanvasInteraction {
       setIsPanning(false);
     }
     drawing.end();
-  }, [isPanning, drawing]);
+    // No-op, если marquee не начат (marqueeRect уже null) — безопасно звать всегда, как drawing.end().
+    marquee.end();
+  }, [isPanning, drawing, marquee]);
 
   // Уводя курсор со Stage, завершаем жест И гасим hover — иначе «move» залипнет.
   const onMouseLeave = useCallback((): void => {
@@ -197,10 +218,30 @@ export function useCanvasInteraction(): CanvasInteraction {
     setIsHoveringShape(false);
   }, [endInteraction]);
 
-  // Drag узла-фигуры (нативный Konva) всплывает до Stage — держим по нему «move»
-  // на весь жест, независимо от hover-теста.
-  const onDragStart = useCallback((): void => setIsDraggingShape(true), []);
-  const onDragEnd = useCallback((): void => setIsDraggingShape(false), []);
+  // Drag узла-фигуры (нативный Konva) всплывает до Stage — держим по нему «move» на весь жест,
+  // независимо от hover-теста. groupDrag (SLT-64) слушает те же bubbled события: если тащат узел
+  // из multi-выделения, синхронизирует остальные выделенные узлы на ту же дельту (Вариант B, см.
+  // useGroupDrag) — для одиночного drag это no-op (activeDrag не заводится, см. её докстринг).
+  const onDragStart = useCallback(
+    (e: KonvaEventObject<DragEvent>): void => {
+      setIsDraggingShape(true);
+      groupDrag.onDragStart(e);
+    },
+    [groupDrag],
+  );
+  const onDragMove = useCallback(
+    (e: KonvaEventObject<DragEvent>): void => {
+      groupDrag.onDragMove(e);
+    },
+    [groupDrag],
+  );
+  const onDragEnd = useCallback(
+    (e: KonvaEventObject<DragEvent>): void => {
+      setIsDraggingShape(false);
+      groupDrag.onDragEnd(e);
+    },
+    [groupDrag],
+  );
 
   // Ре-редактирование text по dblclick (SLT-61, Р6). findAt — тот же hit-test, что у selectAt
   // (единый источник «что под курсором»), просто без побочного эффекта выделения.
@@ -253,6 +294,7 @@ export function useCanvasInteraction(): CanvasInteraction {
       onMouseUp: endInteraction,
       onMouseLeave,
       onDragStart,
+      onDragMove,
       onDragEnd,
       onDblClick,
     },

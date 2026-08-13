@@ -1,7 +1,7 @@
 import type Konva from 'konva';
 import type { Node } from 'konva/lib/Node';
 import { type ReactElement, useCallback, useEffect, useRef } from 'react';
-import { Layer, Stage, Transformer } from 'react-konva';
+import { Layer, Rect, Stage, Transformer } from 'react-konva';
 import { useShallow } from 'zustand/react/shallow';
 
 import { useDocumentStore } from '@/entities/canvas-element';
@@ -57,7 +57,7 @@ export function CanvasStage(): ReactElement {
     return callback;
   }, []);
 
-  const { cursor, handlers, isPanMode } = useCanvasInteraction();
+  const { cursor, handlers, isPanMode } = useCanvasInteraction(nodeMap);
   // Клавиатурный ввод холста (Delete/Backspace → удаление выделения). Отдельный
   // window-listener, поэтому Stage-фокус не нужен.
   useCanvasHotkeys();
@@ -72,6 +72,7 @@ export function CanvasStage(): ReactElement {
   const selectedElementIds = useEditorStore(useShallow((state) => state.selectedElementIds));
   const canEdit = useEditorStore((state) => state.canEdit);
   const editingTextId = useEditorStore((state) => state.editingTextId);
+  const marqueeRect = useEditorStore((state) => state.marqueeRect);
   const elementIds = useDocumentStore(useShallow((state) => state.elementIds));
 
   // Фигуры таскаются нативным Konva draggable, но только в select-режиме, вне pan и при праве на
@@ -97,6 +98,7 @@ export function CanvasStage(): ReactElement {
   const { enabledAnchors, keepRatio, boundBoxFunc, handleTransformEnd } = useTransform(
     transformerRef,
     selectedElementIds,
+    nodeMap,
   );
 
   return (
@@ -137,6 +139,21 @@ export function CanvasStage(): ReactElement {
                 неизбежно чуть разъедется по суб-пиксельному рендеру с DOM-текстом). */}
             {draft && draft.type !== 'text' && (
               <ElementShape element={draft} scale={viewport.scale} />
+            )}
+            {/* Marquee-рамка (SLT-64) — эфемерный визуал по аналогии с draft-превью выше, но не
+                фигура: listening=false, чтобы не перехватывать hit-test у фигур под ней. */}
+            {marqueeRect && (
+              <Rect
+                x={marqueeRect.x}
+                y={marqueeRect.y}
+                width={marqueeRect.width}
+                height={marqueeRect.height}
+                stroke="#c2613d"
+                strokeWidth={1}
+                dash={[4, 4]}
+                fill="rgba(194, 97, 61, 0.08)"
+                listening={false}
+              />
             )}
             {/* Ресайз (SLT-62) и поворот (SLT-63) включены вместе — handleTransformEnd запекает оба
                 за один onTransformEnd. Ручки/keepRatio переключаются по типу выделенной фигуры

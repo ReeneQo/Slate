@@ -1,4 +1,5 @@
 export { ELEMENT_ENDPOINTS, getBoardElements, toUpsertInput } from './api';
+export { type Bounds, getElementBounds, rectsIntersect } from './model/bounds';
 export {
   type DocumentChange,
   type DocumentStore,

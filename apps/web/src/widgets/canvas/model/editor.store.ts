@@ -41,6 +41,13 @@ interface EditorState {
    * useDrawing.start и будущий dblclick-обработчик, SLT-61 Точка сверки 2).
    */
   editingTextId: string | null;
+  /**
+   * Рамка marquee-выделения (SLT-64), эфемерна — живёт только на время mousedown→mouseup по
+   * пустому месту в select-режиме. НЕ в document-сторе и НЕ в контракте: чисто UI-жест, аналог
+   * `draft` для рисования (см. useDrawing) — width/height всегда неотрицательны (нормализованы
+   * под драг в любую сторону), готовы к прямому рендеру Konva.Rect.
+   */
+  marqueeRect: { x: number; y: number; width: number; height: number } | null;
 }
 
 interface EditorActions {
@@ -51,6 +58,7 @@ interface EditorActions {
   setCanEdit: (canEdit: boolean) => void;
   setEditingTextId: (id: string | null) => void;
   clearEditingTextId: () => void;
+  setMarqueeRect: (rect: EditorState['marqueeRect']) => void;
 }
 
 export type EditorStore = EditorState & EditorActions;
@@ -65,6 +73,7 @@ export const useEditorStore = create<EditorStore>()(
     viewport: INITIAL_VIEWPORT,
     canEdit: false,
     editingTextId: null,
+    marqueeRect: null,
 
     setTool: (tool) =>
       set((state) => {
@@ -79,6 +88,10 @@ export const useEditorStore = create<EditorStore>()(
         // Выделение — концепт select-режима. Уходя на инструмент рисования,
         // снимаем его, иначе рамка Transformer «зависнет» поверх рисования.
         if (tool !== 'select') state.selectedElementIds = [];
+        // Marquee — тоже концепт select-режима (см. draft/editingTextId выше): жест marquee
+        // существует только в select, смена инструмента посреди тяги рамки не должна оставить
+        // её висеть поверх уже переключённого холста.
+        state.marqueeRect = null;
       }),
 
     setDraft: (draft) =>
@@ -109,6 +122,11 @@ export const useEditorStore = create<EditorStore>()(
     clearEditingTextId: () =>
       set((state) => {
         state.editingTextId = null;
+      }),
+
+    setMarqueeRect: (rect) =>
+      set((state) => {
+        state.marqueeRect = rect;
       }),
   })),
 );

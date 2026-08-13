@@ -1,10 +1,13 @@
 import type Konva from 'konva';
+import type { Node } from 'konva/lib/Node';
 import type { Box } from 'konva/lib/shapes/Transformer';
 import type { RefObject } from 'react';
 import { useCallback } from 'react';
 
 import { applyResizeTransform, useDocumentStore } from '@/entities/canvas-element';
 import { degToRad, normalizeAngle } from '@/shared/lib/angle';
+
+import { findNodeId } from './nodeRegistry';
 
 /**
  * Минимальный габарит рамки при ресайзе — UI-эргономика Transformer'а, НЕ серверная валидация
@@ -39,13 +42,15 @@ export interface TransformController {
 /**
  * Связывает Konva Transformer с document-стором: считает, какие ручки/keepRatio нужны
  * выделенному типу фигуры, ограничивает минимальный габарит и запекает scale в геометрию по
- * onTransformEnd (SLT-62). Выделение сейчас single (см. useSelection.selectAt) — берём первый
- * (единственный) id; multi-resize приедет естественно с SLT-64 (Transformer уже висит на массиве
- * узлов), здесь на это не рассчитываем.
+ * onTransformEnd (SLT-62). enabledAnchors/keepRatio смотрят на ПЕРВЫЙ выделенный id — для
+ * multi-select с разнородными типами это может дать неидеальный набор ручек (напр. свободный
+ * ресайз для группы, где есть text) — известное упрощение SLT-64, не входит в её объём, дальше не
+ * трогаем.
  */
 export function useTransform(
   transformerRef: RefObject<Konva.Transformer | null>,
   selectedElementIds: string[],
+  nodeMap: RefObject<Map<string, Node>>,
 ): TransformController {
   const selectedType = useDocumentStore((state) => {
     const id = selectedElementIds[0];
@@ -60,43 +65,53 @@ export function useTransform(
   }, []);
 
   const handleTransformEnd = useCallback(() => {
-    // Единственный присоединённый узел (single-select) — тот же порядок, что и
-    // selectedElementIds → nodeMap в CanvasStage (transformer.nodes()[0] соответствует
-    // selectedElementIds[0]).
-    const node = transformerRef.current?.nodes()[0];
-    const id = selectedElementIds[0];
-    if (!node || !id) return;
+    const transformer = transformerRef.current;
+    if (!transformer) return;
 
+    // SLT-64: Transformer уже привязан к МАССИВУ узлов (CanvasStage), multi-resize/rotate
+    // включаются перебором nodes(). Id для каждого узла ищем через nodeMap (findNodeId, identity
+    // узла), а НЕ позиционным совпадением nodes()[i] ↔ selectedElementIds[i] — то совпадение
+    // хрупкое: массив, который CanvasStage передаёт в transformer.nodes(...), строится через
+    // selectedElementIds.map(id => nodeMap.get(id)).filter(Boolean) — если у какого-то id узла ещё
+    // уже нет в nodeMap (гонка гидратации/удаления), массив короче selectedElementIds и все индексы
+    // после пропуска съезжают. Konva сам порядок _nodes не переставляет (проверено по исходнику
+    // Transformer.setNodes — фильтрует только ancestor-of-transformer, не переупорядочивает), но
+    // САМА длина массива не гарантирована равной selectedElementIds — identity-поиск устраняет
+    // зависимость от этого совпадения полностью.
     const { elements, updateElement } = useDocumentStore.getState();
-    const element = elements[id];
-    if (!element) return;
 
-    // onTransformEnd прилетает и на resize-, и на rotate-гест Transformer'а (это два раздельных
-    // жеста — тянешь угловую ручку или ручку-вращалку — но обработчик один), поэтому запекаем ОБА
-    // независимо одним патчем. x/y здесь уже per-type origin, который сам держит Konva (SLT-62 для
-    // resize, SLT-63 для rotate — на повёрнутом узле Konva сдвигает x/y ТАК ЖЕ, как для чистого
-    // ресайза, formula применяется без изменений, см. точку сверки SLT-63): rect/line/freedraw/
-    // arrow/text — угол рамки, ellipse — центр. При чистом rotate (scale=1) applyResizeTransform —
-    // геометрический no-op, x/y просто берутся из узла как есть. При чистом resize rotation() не
-    // меняется — angle патча перезапишет модель тем же значением, тоже no-op.
-    const resizePatch = applyResizeTransform(element, {
-      x: node.x(),
-      y: node.y(),
-      scaleX: node.scaleX(),
-      scaleY: node.scaleY(),
+    transformer.nodes().forEach((node) => {
+      const id = findNodeId(nodeMap.current, node);
+      const element = id ? elements[id] : undefined;
+      if (!id || !element) return;
+
+      // onTransformEnd прилетает и на resize-, и на rotate-гест Transformer'а (это два раздельных
+      // жеста — тянешь угловую ручку или ручку-вращалку — но обработчик один), поэтому запекаем ОБА
+      // независимо одним патчем. x/y здесь уже per-type origin, который сам держит Konva (SLT-62 для
+      // resize, SLT-63 для rotate — на повёрнутом узле Konva сдвигает x/y ТАК ЖЕ, как для чистого
+      // ресайза, formula применяется без изменений, см. точку сверки SLT-63): rect/line/freedraw/
+      // arrow/text — угол рамки, ellipse — центр. При чистом rotate (scale=1) applyResizeTransform —
+      // геометрический no-op, x/y просто берутся из узла как есть. При чистом resize rotation() не
+      // меняется — angle патча перезапишет модель тем же значением, тоже no-op.
+      const resizePatch = applyResizeTransform(element, {
+        x: node.x(),
+        y: node.y(),
+        scaleX: node.scaleX(),
+        scaleY: node.scaleY(),
+      });
+      const angle = normalizeAngle(degToRad(node.rotation()));
+
+      // Обязательный сброс: Konva меняет scaleX/scaleY узла, а не его размеры/points. Не сбросить —
+      // на следующем ресайзе scale накопится поверх уже запечённой геометрии, и фигура «уплывёт».
+      // rotation() НЕ сбрасываем: angle теперь в модели, следующий рендер применит его тем же
+      // значением через ElementShape (rotation={radToDeg(angle)}) — идемпотентно, без двойного
+      // поворота.
+      node.scaleX(1);
+      node.scaleY(1);
+
+      updateElement(id, { ...resizePatch, angle });
     });
-    const angle = normalizeAngle(degToRad(node.rotation()));
-
-    // Обязательный сброс: Konva меняет scaleX/scaleY узла, а не его размеры/points. Не сбросить —
-    // на следующем ресайзе scale накопится поверх уже запечённой геометрии, и фигура «уплывёт».
-    // rotation() НЕ сбрасываем: angle теперь в модели, следующий рендер применит его тем же
-    // значением через ElementShape (rotation={radToDeg(angle)}) — идемпотентно, без двойного
-    // поворота.
-    node.scaleX(1);
-    node.scaleY(1);
-
-    updateElement(id, { ...resizePatch, angle });
-  }, [selectedElementIds, transformerRef]);
+  }, [transformerRef, nodeMap]);
 
   return {
     enabledAnchors: isText ? CORNER_ANCHORS : ALL_ANCHORS,

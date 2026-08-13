@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { degToRad, normalizeAngle, radToDeg } from './angle';
+import { degToRad, normalizeAngle, radToDeg, rotatePoint } from './angle';
 
 describe('radToDeg / degToRad', () => {
   it('radToDeg переводит известные углы', () => {
@@ -52,5 +52,50 @@ describe('normalizeAngle', () => {
       expect(result).toBeGreaterThanOrEqual(0);
       expect(result).toBeLessThan(2 * Math.PI);
     }
+  });
+});
+
+describe('rotatePoint', () => {
+  it('поворот на 0 — точка не двигается', () => {
+    expect(rotatePoint({ x: 5, y: 3 }, { x: 1, y: 1 }, 0)).toEqual({ x: 5, y: 3 });
+  });
+
+  it('90° вокруг начала координат: (1,0) → (0,1)', () => {
+    const result = rotatePoint({ x: 1, y: 0 }, { x: 0, y: 0 }, Math.PI / 2);
+    expect(result.x).toBeCloseTo(0);
+    expect(result.y).toBeCloseTo(1);
+  });
+
+  it('180° вокруг непустого пивота — точка симметрична относительно пивота', () => {
+    const result = rotatePoint({ x: 10, y: 10 }, { x: 5, y: 5 }, Math.PI);
+    expect(result.x).toBeCloseTo(0);
+    expect(result.y).toBeCloseTo(0);
+  });
+
+  it('round-trip: поворот на angle и обратно на -angle возвращает исходную точку', () => {
+    const pivot = { x: 3, y: -2 };
+    const point = { x: 12, y: 7 };
+    const angle = Math.PI / 6; // 30°, несимметричный угол — ловит ошибку знака
+    const rotated = rotatePoint(point, pivot, angle);
+    const back = rotatePoint(rotated, pivot, -angle);
+    expect(back.x).toBeCloseTo(point.x);
+    expect(back.y).toBeCloseTo(point.y);
+  });
+
+  it('несимметричный угол (30°) даёт конкретную мировую точку — знак формулы', () => {
+    // Та же формула, что используется в hitTest.test.ts (SLT-63) для проверки unrotatePoint —
+    // rotatePoint должен воспроизводить её один в один с +angle.
+    const pivot = { x: 10, y: 10 };
+    const local = { x: 60, y: 20 };
+    const angle = Math.PI / 6;
+    const dx = local.x - pivot.x;
+    const dy = local.y - pivot.y;
+    const expected = {
+      x: pivot.x + dx * Math.cos(angle) - dy * Math.sin(angle),
+      y: pivot.y + dx * Math.sin(angle) + dy * Math.cos(angle),
+    };
+    const result = rotatePoint(local, pivot, angle);
+    expect(result.x).toBeCloseTo(expected.x);
+    expect(result.y).toBeCloseTo(expected.y);
   });
 });
