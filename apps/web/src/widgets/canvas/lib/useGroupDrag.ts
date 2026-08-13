@@ -5,6 +5,7 @@ import { useDocumentStore } from '@/entities/canvas-element';
 
 import { useEditorStore } from '../model/editor.store';
 import { computeGroupDragPositions, type GroupDragSibling } from './groupDrag';
+import { findNodeId } from './nodeRegistry';
 
 interface ActiveGroupDrag {
   /** Стартовая позиция ВЕДУЩЕГО узла в его СОБСТВЕННЫХ Konva-координатах (для дельты). */
@@ -19,13 +20,6 @@ export interface GroupDragController {
   onDragStart: (e: KonvaEventObject<DragEvent>) => void;
   onDragMove: (e: KonvaEventObject<DragEvent>) => void;
   onDragEnd: (e: KonvaEventObject<DragEvent>) => void;
-}
-
-function findNodeId(nodeMap: Map<string, Node>, node: Node): string | null {
-  for (const [id, candidate] of nodeMap) {
-    if (candidate === node) return id;
-  }
-  return null;
 }
 
 /**

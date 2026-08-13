@@ -98,6 +98,7 @@ export function CanvasStage(): ReactElement {
   const { enabledAnchors, keepRatio, boundBoxFunc, handleTransformEnd } = useTransform(
     transformerRef,
     selectedElementIds,
+    nodeMap,
   );
 
   return (
