@@ -32,10 +32,12 @@ export function hitTestElement(element: CanvasElement, point: Point, tolerance =
     }
 
     case 'line':
+    case 'arrow':
     case 'freedraw': {
-      // Линия и freedraw — обе тонкие ломаные: попаданием считаем близость к любому сегменту.
-      // isNearPolyline уже перебирает ВСЕ сегменты points (не хардкод на две точки), поэтому
-      // freedraw переиспользует её без изменений — тот же порог = половина толщины + слабина.
+      // Линия, стрелка и freedraw — все тонкие ломаные: попаданием считаем близость к любому
+      // сегменту. isNearPolyline уже перебирает ВСЕ сегменты points (не хардкод на две точки),
+      // поэтому arrow/freedraw переиспользуют её без изменений — тот же порог = половина
+      // толщины + слабина. Наконечник стрелки в hit-test игнорируем — тела достаточно.
       const threshold = tolerance + element.strokeWidth / 2;
       return isNearPolyline(point, element.x, element.y, element.data.points, threshold);
     }

@@ -17,6 +17,7 @@ export {
 } from './model/element';
 export { hitTestElement } from './model/hitTest';
 export type {
+  ArrowElement,
   BaseElement,
   CanvasDocument,
   CanvasElement,

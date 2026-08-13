@@ -94,6 +94,7 @@ export const upsertElementSchema = z.discriminatedUnion('type', [
   upsertVariantSchema('ellipse'),
   upsertVariantSchema('line'),
   upsertVariantSchema('freedraw'),
+  upsertVariantSchema('arrow'),
 ]);
 
 export type UpsertElementInput = z.infer<typeof upsertElementSchema>;
@@ -186,6 +187,7 @@ export const elementResponseSchema = z.discriminatedUnion('type', [
   elementResponseVariantSchema('ellipse'),
   elementResponseVariantSchema('line'),
   elementResponseVariantSchema('freedraw'),
+  elementResponseVariantSchema('arrow'),
 ]);
 
 export type ElementResponse = z.infer<typeof elementResponseSchema>;
@@ -222,6 +224,7 @@ export const elementListItemSchema = z.discriminatedUnion('type', [
   elementListItemVariantSchema('ellipse'),
   elementListItemVariantSchema('line'),
   elementListItemVariantSchema('freedraw'),
+  elementListItemVariantSchema('arrow'),
 ]);
 
 export type ElementListItemResponse = z.infer<typeof elementListItemSchema>;

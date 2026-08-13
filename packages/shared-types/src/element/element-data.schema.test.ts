@@ -114,6 +114,28 @@ describe('parseElementData', () => {
     });
   });
 
+  describe('arrow', () => {
+    it('переиспользует схему line — те же границы и проверки', () => {
+      // arrow геометрически идентична line (два конца отрезка); отдельной arrowDataSchema нет,
+      // наконечник — стиль отрисовки, не геометрия.
+      const result = parseElementData('arrow', { points: [0, 0, 10, 10] });
+
+      expect(result).toEqual({ isValid: true, data: { points: [0, 0, 10, 10] } });
+    });
+
+    it('отвергает стрелку короче двух точек', () => {
+      const result = parseElementData('arrow', { points: [0, 0] });
+
+      expect(result.isValid).toBe(false);
+    });
+
+    it('называет в ошибке тип arrow, а не line', () => {
+      const result = parseElementData('arrow', { points: [0, 0] });
+
+      expect(result).toMatchObject({ errors: [expect.stringContaining('arrow') as string] });
+    });
+  });
+
   it('отвергает не-объект', () => {
     // Дошло бы сюда только мимо @IsObject в DTO — например, из WebSocket-хендлера этапа 3,
     // где DTO-классов не будет.

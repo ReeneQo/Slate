@@ -96,6 +96,10 @@ export const ELEMENT_DATA_SCHEMAS = {
   ellipse: boxDataSchema,
   line: lineDataSchema,
   freedraw: freedrawDataSchema,
+  // Стрелка геометрически идентична линии (два конца отрезка) — переиспользуем ту же схему,
+  // а не заводим arrowDataSchema-дубликат. Наконечник — это стиль отрисовки, а не геометрия,
+  // ему в data делать нечего.
+  arrow: lineDataSchema,
 } satisfies Record<ElementType, z.ZodType>;
 
 /** Геометрия элемента после проверки — union по типам фигур. */
