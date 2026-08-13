@@ -59,6 +59,7 @@ export type CanvasElement = WithVersion<DistributiveOmit<ElementResponse, Server
 export type RectElement = Extract<CanvasElement, { type: 'rect' }>;
 export type EllipseElement = Extract<CanvasElement, { type: 'ellipse' }>;
 export type LineElement = Extract<CanvasElement, { type: 'line' }>;
+export type FreedrawElement = Extract<CanvasElement, { type: 'freedraw' }>;
 
 /** Общие (не зависящие от вида фигуры) поля. Держим как псевдоним — источник правды один. */
 export type BaseElement = Pick<

@@ -39,13 +39,21 @@ describe('createDraft', () => {
     const draft = createDraft('ellipse', { x: 1, y: 2 });
     expect(JSON.parse(JSON.stringify(draft))).toEqual(draft);
   });
+
+  it('freedraw стартует ОДНОЙ точкой (в отличие от line — двух совпадающих)', () => {
+    const draft = createDraft('freedraw', { x: 5, y: 5 });
+    expect(draft.type).toBe('freedraw');
+    if (draft.type === 'freedraw') {
+      expect(draft.data.points).toEqual([0, 0]);
+    }
+  });
 });
 
 describe('updateDraftGeometry', () => {
   it('rect/ellipse: width/height = current - start (можно отрицательные)', () => {
     const draft = createDraft('rect', { x: 100, y: 100 });
     const dragged = updateDraftGeometry(draft, { x: 60, y: 140 });
-    if (dragged.type === 'line') throw new Error('ожидался rect');
+    if (dragged.type !== 'rect') throw new Error('ожидался rect');
     expect(dragged.data.width).toBe(-40);
     expect(dragged.data.height).toBe(40);
   });
@@ -56,6 +64,14 @@ describe('updateDraftGeometry', () => {
     if (dragged.type !== 'line') throw new Error('ожидалась line');
     expect(dragged.data.points).toEqual([0, 0, 30, -10]);
   });
+
+  it('freedraw: точка ДОБАВЛЯЕТСЯ в конец потока, а не перезаписывает вторую', () => {
+    const draft = createDraft('freedraw', { x: 100, y: 100 });
+    const afterFirst = updateDraftGeometry(draft, { x: 110, y: 100 });
+    const afterSecond = updateDraftGeometry(afterFirst, { x: 110, y: 120 });
+    if (afterSecond.type !== 'freedraw') throw new Error('ожидался freedraw');
+    expect(afterSecond.data.points).toEqual([0, 0, 10, 0, 10, 20]);
+  });
 });
 
 describe('normalizeBounds', () => {
@@ -65,8 +81,16 @@ describe('normalizeBounds', () => {
       y: 140,
     });
     const normalized = normalizeBounds(draft);
-    if (normalized.type === 'line') throw new Error('ожидался rect');
+    if (normalized.type !== 'rect') throw new Error('ожидался rect');
     expect(normalized).toMatchObject({ x: 60, y: 100, data: { width: 40, height: 40 } });
+  });
+
+  it('freedraw не трогает (точки относительные, как у line)', () => {
+    const draft = updateDraftGeometry(createDraft('freedraw', { x: 0, y: 0 }), {
+      x: -10,
+      y: -20,
+    });
+    expect(normalizeBounds(draft)).toEqual(draft);
   });
 
   it('линию не трогает (точки относительные)', () => {
@@ -97,5 +121,11 @@ describe('isCommittable', () => {
       y: 0,
     });
     expect(isCommittable(draft)).toBe(true);
+  });
+
+  it('freedraw: пропускает даже одиночную точку без движения (клик = точка-клякса)', () => {
+    // В отличие от rect/line, freedraw НЕ отсекает клик без драга — мазок из одной точки
+    // коммитится (см. useDrawing: на mouseup она дублируется в точку-кляксу).
+    expect(isCommittable(createDraft('freedraw', { x: 0, y: 0 }))).toBe(true);
   });
 });
