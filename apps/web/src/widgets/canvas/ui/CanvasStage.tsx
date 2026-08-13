@@ -10,6 +10,7 @@ import { Toolbar } from '@/features/toolbar';
 import { useCanvasHotkeys } from '../lib/useCanvasHotkeys';
 import { useCanvasInteraction } from '../lib/useCanvasInteraction';
 import { useCursorBroadcast } from '../lib/useCursorBroadcast';
+import { useTransform } from '../lib/useTransform';
 import { useViewportSize } from '../lib/useViewportSize';
 import { useEditorStore } from '../model/editor.store';
 import { ElementShape } from './ElementShape';
@@ -93,6 +94,11 @@ export function CanvasStage(): ReactElement {
     transformer.getLayer()?.batchDraw();
   }, [selectedElementIds, elementIds]);
 
+  const { enabledAnchors, keepRatio, boundBoxFunc, handleTransformEnd } = useTransform(
+    transformerRef,
+    selectedElementIds,
+  );
+
   return (
     <>
       <div
@@ -132,12 +138,17 @@ export function CanvasStage(): ReactElement {
             {draft && draft.type !== 'text' && (
               <ElementShape element={draft} scale={viewport.scale} />
             )}
-            {/* Только рамка: ресайз/поворот/ручки выключены (этап 1 их не делает). */}
+            {/* Ресайз включён (SLT-62), поворот — НЕТ (SLT-63, angle пока латентный поле).
+                Ручки/keepRatio переключаются по типу выделенной фигуры (useTransform): text —
+                только углы + пропорционально, остальные — полный набор, свободный ресайз. */}
             <Transformer
               ref={transformerRef}
-              resizeEnabled={false}
+              resizeEnabled
               rotateEnabled={false}
-              enabledAnchors={[]}
+              enabledAnchors={enabledAnchors}
+              keepRatio={keepRatio}
+              boundBoxFunc={boundBoxFunc}
+              onTransformEnd={handleTransformEnd}
               borderStroke="#c2613d"
               borderStrokeWidth={1.5}
               borderDash={[4, 4]}
