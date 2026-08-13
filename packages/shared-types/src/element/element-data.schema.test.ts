@@ -82,6 +82,38 @@ describe('parseElementData', () => {
     });
   });
 
+  describe('freedraw', () => {
+    it('принимает плоский массив координат', () => {
+      const result = parseElementData('freedraw', { points: [0, 0, 10, 10] });
+
+      expect(result).toEqual({ isValid: true, data: { points: [0, 0, 10, 10] } });
+    });
+
+    it('принимает одиночную точку (клик без движения — точка-клякса)', () => {
+      const result = parseElementData('freedraw', { points: [5, 5] });
+
+      expect(result.isValid).toBe(true);
+    });
+
+    it('отвергает нечётную длину', () => {
+      const result = parseElementData('freedraw', { points: [0, 0, 10, 10, 20] });
+
+      expect(result.isValid).toBe(false);
+    });
+
+    it('отвергает пустой массив', () => {
+      const result = parseElementData('freedraw', { points: [] });
+
+      expect(result.isValid).toBe(false);
+    });
+
+    it('отвергает массив, в котором не только числа', () => {
+      const result = parseElementData('freedraw', { points: [0, 0, '10', 10] });
+
+      expect(result.isValid).toBe(false);
+    });
+  });
+
   it('отвергает не-объект', () => {
     // Дошло бы сюда только мимо @IsObject в DTO — например, из WebSocket-хендлера этапа 3,
     // где DTO-классов не будет.
