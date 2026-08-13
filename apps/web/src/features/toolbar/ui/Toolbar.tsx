@@ -15,6 +15,7 @@ const TOOLS: readonly ToolDescriptor[] = [
   { tool: 'ellipse', label: 'Ellipse', hint: 'O' },
   { tool: 'line', label: 'Line', hint: 'L' },
   { tool: 'freedraw', label: 'Pencil', hint: 'P' },
+  { tool: 'arrow', label: 'Arrow', hint: 'A' },
 ];
 
 interface ToolbarProps {

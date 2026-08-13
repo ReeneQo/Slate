@@ -47,6 +47,14 @@ describe('createDraft', () => {
       expect(draft.data.points).toEqual([0, 0]);
     }
   });
+
+  it('arrow стартует двумя совпадающими точками, как line', () => {
+    const draft = createDraft('arrow', { x: 5, y: 5 });
+    expect(draft.type).toBe('arrow');
+    if (draft.type === 'arrow') {
+      expect(draft.data.points).toEqual([0, 0, 0, 0]);
+    }
+  });
 });
 
 describe('updateDraftGeometry', () => {
@@ -72,6 +80,13 @@ describe('updateDraftGeometry', () => {
     if (afterSecond.type !== 'freedraw') throw new Error('ожидался freedraw');
     expect(afterSecond.data.points).toEqual([0, 0, 10, 0, 10, 20]);
   });
+
+  it('arrow: точки относительно старта, как у line (перезапись, не append)', () => {
+    const draft = createDraft('arrow', { x: 100, y: 100 });
+    const dragged = updateDraftGeometry(draft, { x: 130, y: 90 });
+    if (dragged.type !== 'arrow') throw new Error('ожидалась arrow');
+    expect(dragged.data.points).toEqual([0, 0, 30, -10]);
+  });
 });
 
 describe('normalizeBounds', () => {
@@ -95,6 +110,14 @@ describe('normalizeBounds', () => {
 
   it('линию не трогает (точки относительные)', () => {
     const draft = updateDraftGeometry(createDraft('line', { x: 0, y: 0 }), {
+      x: -10,
+      y: -20,
+    });
+    expect(normalizeBounds(draft)).toEqual(draft);
+  });
+
+  it('arrow не трогает, как line (точки относительные)', () => {
+    const draft = updateDraftGeometry(createDraft('arrow', { x: 0, y: 0 }), {
       x: -10,
       y: -20,
     });
@@ -127,5 +150,17 @@ describe('isCommittable', () => {
     // В отличие от rect/line, freedraw НЕ отсекает клик без драга — мазок из одной точки
     // коммитится (см. useDrawing: на mouseup она дублируется в точку-кляксу).
     expect(isCommittable(createDraft('freedraw', { x: 0, y: 0 }))).toBe(true);
+  });
+
+  it('отсекает arrow-клик без драга (нулевой размер), как line', () => {
+    expect(isCommittable(createDraft('arrow', { x: 0, y: 0 }))).toBe(false);
+  });
+
+  it('пропускает arrow ненулевой длины', () => {
+    const draft = updateDraftGeometry(createDraft('arrow', { x: 0, y: 0 }), {
+      x: 40,
+      y: 0,
+    });
+    expect(isCommittable(draft)).toBe(true);
   });
 });

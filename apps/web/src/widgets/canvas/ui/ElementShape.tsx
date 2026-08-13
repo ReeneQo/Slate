@@ -1,6 +1,6 @@
 import type { KonvaEventObject, Node } from 'konva/lib/Node';
 import type { ReactElement } from 'react';
-import { Ellipse, Line, Rect } from 'react-konva';
+import { Arrow, Ellipse, Line, Rect } from 'react-konva';
 
 import type { CanvasElement, DraftElement } from '@/entities/canvas-element';
 import type { Point } from '@/shared/lib/viewport';
@@ -13,6 +13,14 @@ import { HIT_PADDING_PX } from '../lib/useSelection';
  * визуальная примочка поверх той же полилинии, что и у line.
  */
 const FREEDRAW_TENSION = 0.4;
+
+/**
+ * Наконечник стрелки (Konva.Arrow: pointerLength/pointerWidth) — параметр рендера,
+ * не геометрии, поэтому живёт здесь же, а не в shared-types: стрелка переиспользует
+ * геометрию линии (LINE_POINTS_MIN/MAX), но наконечник серверу/валидации не нужен.
+ */
+const ARROW_POINTER_LENGTH = 12;
+const ARROW_POINTER_WIDTH = 12;
 
 interface ElementShapeProps {
   /** Закоммиченный элемент или черновик-превью — рендерятся одинаково. */
@@ -71,7 +79,7 @@ export function ElementShape({
   // в экранных px при любом зуме — как и курсор.
   const tolerance = HIT_PADDING_PX / scale;
   const hitStrokeWidth =
-    element.type === 'line' || element.type === 'freedraw'
+    element.type === 'line' || element.type === 'freedraw' || element.type === 'arrow'
       ? 2 * tolerance + element.strokeWidth
       : 2 * tolerance;
 
@@ -132,6 +140,25 @@ export function ElementShape({
           y={element.y}
           points={element.data.points}
           tension={FREEDRAW_TENSION}
+          lineCap="round"
+          lineJoin="round"
+          {...common}
+        />
+      );
+
+    case 'arrow':
+      // Та же геометрия, что у line (points относительны x/y) — отличие только в наконечнике.
+      // pointerAtEnding по умолчанию true у Konva.Arrow (наконечник в конце, у второй точки),
+      // pointerAtBeginning по умолчанию false — оба дефолта совпадают с требуемым поведением,
+      // явно не задаём.
+      return (
+        <Arrow
+          ref={shapeRef}
+          x={element.x}
+          y={element.y}
+          points={element.data.points}
+          pointerLength={ARROW_POINTER_LENGTH}
+          pointerWidth={ARROW_POINTER_WIDTH}
           lineCap="round"
           lineJoin="round"
           {...common}

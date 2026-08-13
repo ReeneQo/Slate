@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { hitTestElement } from './hitTest';
-import type { EllipseElement, FreedrawElement, LineElement, RectElement } from './types';
+import type {
+  ArrowElement,
+  EllipseElement,
+  FreedrawElement,
+  LineElement,
+  RectElement,
+} from './types';
 
 const base = {
   id: 'x',
@@ -24,6 +30,13 @@ const ellipse: EllipseElement = {
   data: { width: 100, height: 100 },
 };
 const line: LineElement = { ...base, type: 'line', x: 0, y: 0, data: { points: [0, 0, 100, 0] } };
+const arrow: ArrowElement = {
+  ...base,
+  type: 'arrow',
+  x: 0,
+  y: 0,
+  data: { points: [0, 0, 100, 0] },
+};
 const freedraw: FreedrawElement = {
   ...base,
   type: 'freedraw',
@@ -76,6 +89,16 @@ describe('hitTestElement — line', () => {
   it('tolerance добавляется к порогу расстояния', () => {
     expect(hitTestElement(line, { x: 50, y: 5 })).toBe(false);
     expect(hitTestElement(line, { x: 50, y: 5 }, 5)).toBe(true);
+  });
+});
+
+describe('hitTestElement — arrow', () => {
+  it('попадает по близости к телу стрелки, как line (наконечник в hit-test не участвует)', () => {
+    expect(hitTestElement(arrow, { x: 50, y: 0.5 })).toBe(true);
+  });
+
+  it('не попадает вдали от стрелки', () => {
+    expect(hitTestElement(arrow, { x: 50, y: 20 })).toBe(false);
   });
 });
 

@@ -49,8 +49,8 @@ export function createDraft(type: ElementType, start: Point): DraftElement {
     ...DEFAULT_STYLE,
   };
 
-  if (type === 'line') {
-    return { type: 'line', ...common, data: { points: [0, 0, 0, 0] } };
+  if (type === 'line' || type === 'arrow') {
+    return { type, ...common, data: { points: [0, 0, 0, 0] } };
   }
   if (type === 'freedraw') {
     // В отличие от line (сразу две точки-конца отрезка), freedraw стартует ОДНОЙ точкой —
@@ -66,7 +66,9 @@ export function createDraft(type: ElementType, start: Point): DraftElement {
  * нормализуем при коммите. Для линии точки храним относительно x/y старта.
  */
 export function updateDraftGeometry(draft: DraftElement, current: Point): DraftElement {
-  if (draft.type === 'line') {
+  if (draft.type === 'line' || draft.type === 'arrow') {
+    // arrow геометрически идентична line (два конца отрезка) — та же перезапись второй точки,
+    // без накопления, в отличие от freedraw ниже.
     return { ...draft, data: { points: [0, 0, current.x - draft.x, current.y - draft.y] } };
   }
   if (draft.type === 'freedraw') {
@@ -88,9 +90,9 @@ export function updateDraftGeometry(draft: DraftElement, current: Point): DraftE
  * вызывается при коммите. Линию не трогаем (точки относительные).
  */
 export function normalizeBounds(draft: DraftElement): DraftElement {
-  // Как и у line: точки относительны x/y старта, Konva.Line рисует их так и без нормализации
-  // bbox в x/y — двигать «угол» под freedraw незачем, тот же приём, что у линии.
-  if (draft.type === 'line' || draft.type === 'freedraw') return draft;
+  // Как и у line: точки относительны x/y старта, Konva.Line/Arrow рисует их так и без
+  // нормализации bbox в x/y — двигать «угол» под freedraw/arrow незачем, тот же приём.
+  if (draft.type === 'line' || draft.type === 'freedraw' || draft.type === 'arrow') return draft;
 
   const { x, y } = draft;
   const { width, height } = draft.data;
@@ -107,9 +109,9 @@ export function normalizeBounds(draft: DraftElement): DraftElement {
  * Для линии меряем длину «коробки» по точкам, для остального — width/height.
  */
 export function isCommittable(draft: DraftElement): boolean {
-  if (draft.type === 'line') {
+  if (draft.type === 'line' || draft.type === 'arrow') {
     // Дефолты в деструктуризации удовлетворяют noUncheckedIndexedAccess
-    // и безопасны: линия всегда имеет минимум две точки.
+    // и безопасны: линия/стрелка всегда имеют минимум две точки.
     const [x1 = 0, y1 = 0, x2 = 0, y2 = 0] = draft.data.points;
     return Math.abs(x2 - x1) >= MIN_COMMIT_SIZE || Math.abs(y2 - y1) >= MIN_COMMIT_SIZE;
   }
