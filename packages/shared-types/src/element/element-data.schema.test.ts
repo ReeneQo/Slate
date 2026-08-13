@@ -136,6 +136,83 @@ describe('parseElementData', () => {
     });
   });
 
+  describe('text', () => {
+    it('принимает текст с шрифтом', () => {
+      const result = parseElementData('text', { text: 'привет', fontSize: 20, fontFamily: 'sans' });
+
+      expect(result).toEqual({
+        isValid: true,
+        data: { text: 'привет', fontSize: 20, fontFamily: 'sans' },
+      });
+    });
+
+    it('принимает пустую строку (валидность геометрии — не то же самое, что isCommittable на клиенте)', () => {
+      // parseElementData проверяет ТОЛЬКО форму, не «стоит ли коммитить пустой текст» — это
+      // отдельное клиентское правило (isCommittable), пустая строка — законное значение поля.
+      const result = parseElementData('text', { text: '', fontSize: 20, fontFamily: 'sans' });
+
+      expect(result.isValid).toBe(true);
+    });
+
+    it('отвергает текст длиннее TEXT_MAX_LENGTH', () => {
+      const result = parseElementData('text', {
+        text: 'a'.repeat(10_001),
+        fontSize: 20,
+        fontFamily: 'sans',
+      });
+
+      expect(result.isValid).toBe(false);
+    });
+
+    it('отвергает fontSize меньше нижней границы', () => {
+      const result = parseElementData('text', { text: 'a', fontSize: 7, fontFamily: 'sans' });
+
+      expect(result.isValid).toBe(false);
+    });
+
+    it('отвергает fontSize больше верхней границы', () => {
+      const result = parseElementData('text', { text: 'a', fontSize: 201, fontFamily: 'sans' });
+
+      expect(result.isValid).toBe(false);
+    });
+
+    it('принимает границы включительно', () => {
+      expect(parseElementData('text', { text: 'a', fontSize: 8, fontFamily: 'mono' }).isValid).toBe(
+        true,
+      );
+      expect(
+        parseElementData('text', { text: 'a', fontSize: 200, fontFamily: 'mono' }).isValid,
+      ).toBe(true);
+    });
+
+    it('отвергает произвольную строку fontFamily — enum закрытый, не свободный CSS font-family', () => {
+      const result = parseElementData('text', {
+        text: 'a',
+        fontSize: 20,
+        fontFamily: 'Comic Sans MS',
+      });
+
+      expect(result.isValid).toBe(false);
+    });
+
+    it('отвергает лишние ключи, а не проглатывает их', () => {
+      const result = parseElementData('text', {
+        text: 'a',
+        fontSize: 20,
+        fontFamily: 'sans',
+        color: 'red',
+      });
+
+      expect(result.isValid).toBe(false);
+    });
+
+    it('отвергает геометрию чужой фигуры (points вместо text)', () => {
+      const result = parseElementData('text', { points: [0, 0, 10, 10] });
+
+      expect(result.isValid).toBe(false);
+    });
+  });
+
   it('отвергает не-объект', () => {
     // Дошло бы сюда только мимо @IsObject в DTO — например, из WebSocket-хендлера этапа 3,
     // где DTO-классов не будет.

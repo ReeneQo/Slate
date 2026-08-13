@@ -51,3 +51,22 @@ export const LINE_POINTS_MAX = 10_000;
  */
 export const FREEDRAW_POINTS_MIN = 2;
 export const FREEDRAW_POINTS_MAX = 50_000;
+
+/**
+ * Текст: длина строки и размер шрифта — те же границы нужны и клиенту (текстовый оверлей),
+ * и серверу (WS/HTTP не доверяют клиенту, CLAUDE.md). Верхняя граница длины — не про «столько не
+ * наберут», а про то же самое, что и у SHAPE_SIZE_MAX: jsonb-блоб не должен раздуваться без предела.
+ */
+export const TEXT_MAX_LENGTH = 10_000;
+
+/** Размер шрифта. Нижняя граница — предел читаемости, верхняя — та же логика, что у SHAPE_SIZE_MAX. */
+export const TEXT_FONT_SIZE_MIN = 8;
+export const TEXT_FONT_SIZE_MAX = 200;
+
+/**
+ * Дефолты нового текстового элемента (createDraft на клиенте). `as const` на семействе шрифта —
+ * литеральный тип 'sans', а не widened string, иначе createDraft не подошёл бы под
+ * fontFamilySchema без явного приведения.
+ */
+export const TEXT_DEFAULT_FONT_SIZE = 20;
+export const TEXT_DEFAULT_FONT_FAMILY = 'sans' as const;
