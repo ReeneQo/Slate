@@ -3,6 +3,7 @@ import type { ReactElement } from 'react';
 import { Arrow, Ellipse, Line, Rect, Text } from 'react-konva';
 
 import type { CanvasElement, DraftElement } from '@/entities/canvas-element';
+import { radToDeg } from '@/shared/lib/angle';
 import type { Point } from '@/shared/lib/viewport';
 
 import { resolveFontFamily, TEXT_LINE_HEIGHT, TEXT_PADDING } from '../lib/textMetrics';
@@ -54,7 +55,8 @@ function nodePositionToModel(element: ElementShapeProps['element'], node: Node):
  * принимает данные пропсом, поэтому переиспользуется и для готовых фигур,
  * и для превью черновика.
  *
- * angle храним в градусах (как rotation у Konva) — отдаём напрямую.
+ * angle в модели — РАДИАНЫ (контракт), Konva `rotation` ждёт ГРАДУСЫ (SLT-27/63) —
+ * конверсия radToDeg() на КАЖДОМ месте, где angle идёт в Konva-проп.
  */
 export function ElementShape({
   element,
@@ -88,7 +90,7 @@ export function ElementShape({
     stroke: element.stroke,
     strokeWidth: element.strokeWidth,
     opacity: element.opacity,
-    rotation: element.angle,
+    rotation: radToDeg(element.angle),
     // Сервер отдаёт fill как string | null (null — фигура без заливки). Konva ждёт
     // string | undefined, поэтому null приводим к undefined — «заливки нет».
     fill: element.fill ?? undefined,
@@ -184,7 +186,7 @@ export function ElementShape({
           padding={TEXT_PADDING}
           fill={element.stroke}
           opacity={element.opacity}
-          rotation={element.angle}
+          rotation={radToDeg(element.angle)}
           draggable={draggable}
           onDragEnd={handleDragEnd}
         />

@@ -138,13 +138,14 @@ export function CanvasStage(): ReactElement {
             {draft && draft.type !== 'text' && (
               <ElementShape element={draft} scale={viewport.scale} />
             )}
-            {/* Ресайз включён (SLT-62), поворот — НЕТ (SLT-63, angle пока латентный поле).
-                Ручки/keepRatio переключаются по типу выделенной фигуры (useTransform): text —
-                только углы + пропорционально, остальные — полный набор, свободный ресайз. */}
+            {/* Ресайз (SLT-62) и поворот (SLT-63) включены вместе — handleTransformEnd запекает оба
+                за один onTransformEnd. Ручки/keepRatio переключаются по типу выделенной фигуры
+                (useTransform): text — только углы + пропорционально, остальные — полный набор,
+                свободный ресайз. Поворот доступен для ВСЕХ типов, включая text. */}
             <Transformer
               ref={transformerRef}
               resizeEnabled
-              rotateEnabled={false}
+              rotateEnabled
               enabledAnchors={enabledAnchors}
               keepRatio={keepRatio}
               boundBoxFunc={boundBoxFunc}

@@ -4,6 +4,7 @@ import type { RefObject } from 'react';
 import { useCallback } from 'react';
 
 import { applyResizeTransform, useDocumentStore } from '@/entities/canvas-element';
+import { degToRad, normalizeAngle } from '@/shared/lib/angle';
 
 /**
  * Минимальный габарит рамки при ресайзе — UI-эргономика Transformer'а, НЕ серверная валидация
@@ -70,19 +71,31 @@ export function useTransform(
     const element = elements[id];
     if (!element) return;
 
-    const patch = applyResizeTransform(element, {
+    // onTransformEnd прилетает и на resize-, и на rotate-гест Transformer'а (это два раздельных
+    // жеста — тянешь угловую ручку или ручку-вращалку — но обработчик один), поэтому запекаем ОБА
+    // независимо одним патчем. x/y здесь уже per-type origin, который сам держит Konva (SLT-62 для
+    // resize, SLT-63 для rotate — на повёрнутом узле Konva сдвигает x/y ТАК ЖЕ, как для чистого
+    // ресайза, formula применяется без изменений, см. точку сверки SLT-63): rect/line/freedraw/
+    // arrow/text — угол рамки, ellipse — центр. При чистом rotate (scale=1) applyResizeTransform —
+    // геометрический no-op, x/y просто берутся из узла как есть. При чистом resize rotation() не
+    // меняется — angle патча перезапишет модель тем же значением, тоже no-op.
+    const resizePatch = applyResizeTransform(element, {
       x: node.x(),
       y: node.y(),
       scaleX: node.scaleX(),
       scaleY: node.scaleY(),
     });
+    const angle = normalizeAngle(degToRad(node.rotation()));
 
     // Обязательный сброс: Konva меняет scaleX/scaleY узла, а не его размеры/points. Не сбросить —
     // на следующем ресайзе scale накопится поверх уже запечённой геометрии, и фигура «уплывёт».
+    // rotation() НЕ сбрасываем: angle теперь в модели, следующий рендер применит его тем же
+    // значением через ElementShape (rotation={radToDeg(angle)}) — идемпотентно, без двойного
+    // поворота.
     node.scaleX(1);
     node.scaleY(1);
 
-    updateElement(id, patch);
+    updateElement(id, { ...resizePatch, angle });
   }, [selectedElementIds, transformerRef]);
 
   return {

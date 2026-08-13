@@ -3,6 +3,35 @@ import type { Point } from '@/shared/lib/viewport';
 import type { CanvasElement } from './types';
 
 /**
+ * Пивот поворота элемента (SLT-63) — та же точка, в которой Konva держит нативный rotation-якорь
+ * (см. точку сверки SLT-63 и ElementShape.nodePositionToModel): rect/line/freedraw/arrow/text
+ * поворачиваются вокруг угла рамки (x, y), ellipse — вокруг центра. Дублирует различие по типу
+ * из ElementShape/resize.ts намеренно: hitTest в entities не может импортировать из widgets.
+ */
+function getRotationPivot(element: CanvasElement): Point {
+  if (element.type === 'ellipse') {
+    return { x: element.x + element.data.width / 2, y: element.y + element.data.height / 2 };
+  }
+  return { x: element.x, y: element.y };
+}
+
+/**
+ * Переводит мировую точку в НЕВРАЩЁННУЮ локальную систему элемента — поворотом на -angle вокруг
+ * его пивота. Существующие isInsideRect/isInsideEllipse/isNearPolyline считают геометрию именно
+ * в этой системе (без учёта angle), так что после поворота точки их код не меняется.
+ */
+function unrotatePoint(point: Point, pivot: Point, angle: number): Point {
+  const cos = Math.cos(-angle);
+  const sin = Math.sin(-angle);
+  const dx = point.x - pivot.x;
+  const dy = point.y - pivot.y;
+  return {
+    x: pivot.x + dx * cos - dy * sin,
+    y: pivot.y + dx * sin + dy * cos,
+  };
+}
+
+/**
  * Ручной hit-тест «точка попала в фигуру». Живёт в entities как чистая геометрия
  * над доменной моделью (без Konva/DOM), поэтому переиспользуется выделением на
  * холсте и легко тестируется в изоляции.
@@ -27,10 +56,15 @@ const TEXT_HIT_LINE_HEIGHT_FACTOR = 1.2;
 const TEXT_HIT_CHAR_WIDTH_FACTOR = 0.6;
 
 export function hitTestElement(element: CanvasElement, point: Point, tolerance = 0): boolean {
+  // Ниже все проверки считают в НЕВРАЩЁННОЙ системе — для повёрнутой фигуры (angle !== 0)
+  // переводим точку клика в эту систему один раз, до свитча, остальной код не знает про angle.
+  const localPoint =
+    element.angle !== 0 ? unrotatePoint(point, getRotationPivot(element), element.angle) : point;
+
   switch (element.type) {
     case 'rect': {
       const { width, height } = element.data;
-      return isInsideRect(point, element.x, element.y, width, height, tolerance);
+      return isInsideRect(localPoint, element.x, element.y, width, height, tolerance);
     }
 
     case 'ellipse': {
@@ -39,7 +73,7 @@ export function hitTestElement(element: CanvasElement, point: Point, tolerance =
       const ry = Math.abs(height) / 2;
       const cx = element.x + width / 2;
       const cy = element.y + height / 2;
-      return isInsideEllipse(point, cx, cy, rx, ry, tolerance);
+      return isInsideEllipse(localPoint, cx, cy, rx, ry, tolerance);
     }
 
     case 'line':
@@ -50,7 +84,7 @@ export function hitTestElement(element: CanvasElement, point: Point, tolerance =
       // поэтому arrow/freedraw переиспользуют её без изменений — тот же порог = половина
       // толщины + слабина. Наконечник стрелки в hit-test игнорируем — тела достаточно.
       const threshold = tolerance + element.strokeWidth / 2;
-      return isNearPolyline(point, element.x, element.y, element.data.points, threshold);
+      return isNearPolyline(localPoint, element.x, element.y, element.data.points, threshold);
     }
 
     case 'text': {
@@ -61,7 +95,7 @@ export function hitTestElement(element: CanvasElement, point: Point, tolerance =
       const longestLine = lines.reduce((max, line) => Math.max(max, line.length), 0);
       const width = longestLine * fontSize * TEXT_HIT_CHAR_WIDTH_FACTOR;
       const height = lines.length * fontSize * TEXT_HIT_LINE_HEIGHT_FACTOR;
-      return isInsideRect(point, element.x, element.y, width, height, tolerance);
+      return isInsideRect(localPoint, element.x, element.y, width, height, tolerance);
     }
 
     default:

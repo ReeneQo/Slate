@@ -47,11 +47,9 @@ type WithVersion<T> = T extends unknown ? T & { version: number } : never;
  * `{ points }` для line) — ровно как на бэке, поэтому маппинг «клиент → тело create» это по сути
  * добавление boardId и снятие version, без переукладки полей.
  *
- * ВНИМАНИЕ про `angle`: серверный контракт задаёт его в РАДИАНАХ (element.contracts.ts), а
- * ElementShape сейчас скармливает значение Konva как `rotation` (ГРАДУСЫ). Этап 1 не вращает —
- * angle всегда 0, где радианы и градусы совпадают, поэтому расхождение латентно и не проявляется.
- * Когда появится вращение (Transformer, rotate), единицу надо свести на границе рендера. См.
- * развилку в описании SLT-27.
+ * ПРО `angle`: серверный контракт задаёт его в РАДИАНАХ (element.contracts.ts). Konva `rotation`
+ * ждёт ГРАДУСЫ — конверсия сведена на границе рендера (ElementShape.tsx, radToDeg/degToRad из
+ * shared/lib/angle.ts), SLT-27/63. Модель угол в градусах нигде не хранит.
  */
 export type CanvasElement = WithVersion<DistributiveOmit<ElementResponse, ServerOnlyFields>>;
 
