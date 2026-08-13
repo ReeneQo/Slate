@@ -61,6 +61,7 @@ export type EllipseElement = Extract<CanvasElement, { type: 'ellipse' }>;
 export type LineElement = Extract<CanvasElement, { type: 'line' }>;
 export type FreedrawElement = Extract<CanvasElement, { type: 'freedraw' }>;
 export type ArrowElement = Extract<CanvasElement, { type: 'arrow' }>;
+export type TextElement = Extract<CanvasElement, { type: 'text' }>;
 
 /** Общие (не зависящие от вида фигуры) поля. Держим как псевдоним — источник правды один. */
 export type BaseElement = Pick<

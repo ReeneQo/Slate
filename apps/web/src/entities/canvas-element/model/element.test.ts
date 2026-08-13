@@ -55,6 +55,14 @@ describe('createDraft', () => {
       expect(draft.data.points).toEqual([0, 0, 0, 0]);
     }
   });
+
+  it('text стартует пустым содержимым и дефолтным шрифтом в точке клика (НЕ геометрия точек)', () => {
+    const draft = createDraft('text', { x: 5, y: 5 });
+    expect(draft.type).toBe('text');
+    if (draft.type === 'text') {
+      expect(draft.data).toEqual({ text: '', fontSize: 20, fontFamily: 'sans' });
+    }
+  });
 });
 
 describe('updateDraftGeometry', () => {
@@ -86,6 +94,12 @@ describe('updateDraftGeometry', () => {
     const dragged = updateDraftGeometry(draft, { x: 130, y: 90 });
     if (dragged.type !== 'arrow') throw new Error('ожидалась arrow');
     expect(dragged.data.points).toEqual([0, 0, 30, -10]);
+  });
+
+  it('text: no-op — драг мышью не меняет содержимое (геометрию меняет только оверлей ввода)', () => {
+    const draft = createDraft('text', { x: 100, y: 100 });
+    const dragged = updateDraftGeometry(draft, { x: 130, y: 90 });
+    expect(dragged).toEqual(draft);
   });
 });
 
@@ -121,6 +135,11 @@ describe('normalizeBounds', () => {
       x: -10,
       y: -20,
     });
+    expect(normalizeBounds(draft)).toEqual(draft);
+  });
+
+  it('text не трогает (нет драг-рамки — нормализовать нечего)', () => {
+    const draft = createDraft('text', { x: 10, y: 20 });
     expect(normalizeBounds(draft)).toEqual(draft);
   });
 });
@@ -162,5 +181,21 @@ describe('isCommittable', () => {
       y: 0,
     });
     expect(isCommittable(draft)).toBe(true);
+  });
+
+  it('отсекает пустой text (свежесозданный черновик без ввода)', () => {
+    expect(isCommittable(createDraft('text', { x: 0, y: 0 }))).toBe(false);
+  });
+
+  it('отсекает text из одних пробелов/переносов (trim пуст)', () => {
+    const draft = createDraft('text', { x: 0, y: 0 });
+    if (draft.type !== 'text') throw new Error('ожидался text');
+    expect(isCommittable({ ...draft, data: { ...draft.data, text: '   \n  ' } })).toBe(false);
+  });
+
+  it('пропускает text с непустым содержимым', () => {
+    const draft = createDraft('text', { x: 0, y: 0 });
+    if (draft.type !== 'text') throw new Error('ожидался text');
+    expect(isCommittable({ ...draft, data: { ...draft.data, text: 'привет' } })).toBe(true);
   });
 });

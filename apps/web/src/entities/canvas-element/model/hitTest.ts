@@ -15,6 +15,17 @@ import type { CanvasElement } from './types';
  * tolerance — слабина в координатах холста (обычно экранный паддинг / scale),
  * чтобы по фигуре легче было попасть на мелком зуме.
  */
+/**
+ * Грубая оценка bbox текста БЕЗ реального измерения (не Konva-нода, не DOM Canvas): line-height
+ * коэффициент и средняя ширина символа как доля fontSize. Точность здесь не критична — хитбокс
+ * только решает «можно ли попасть кликом», настоящий bbox для Transformer'а даст SLT-62.
+ * Независимые от TEXT_LINE_HEIGHT/resolveFontFamily (widgets/canvas/ui/ElementShape.tsx)
+ * константы: hitTest живёт в entities и не может импортировать из widgets (FSD — только вниз),
+ * а приближение и не обязано совпадать с точным рендером пиксель-в-пиксель.
+ */
+const TEXT_HIT_LINE_HEIGHT_FACTOR = 1.2;
+const TEXT_HIT_CHAR_WIDTH_FACTOR = 0.6;
+
 export function hitTestElement(element: CanvasElement, point: Point, tolerance = 0): boolean {
   switch (element.type) {
     case 'rect': {
@@ -40,6 +51,17 @@ export function hitTestElement(element: CanvasElement, point: Point, tolerance =
       // толщины + слабина. Наконечник стрелки в hit-test игнорируем — тела достаточно.
       const threshold = tolerance + element.strokeWidth / 2;
       return isNearPolyline(point, element.x, element.y, element.data.points, threshold);
+    }
+
+    case 'text': {
+      // Прямоугольная область, НЕ polyline: text — это content-блок от x/y (левый верхний угол),
+      // не ломаная. Пустой текст в hitTest не встречается (isCommittable отсекает коммит пустого).
+      const { text, fontSize } = element.data;
+      const lines = text.split('\n');
+      const longestLine = lines.reduce((max, line) => Math.max(max, line.length), 0);
+      const width = longestLine * fontSize * TEXT_HIT_CHAR_WIDTH_FACTOR;
+      const height = lines.length * fontSize * TEXT_HIT_LINE_HEIGHT_FACTOR;
+      return isInsideRect(point, element.x, element.y, width, height, tolerance);
     }
 
     default:

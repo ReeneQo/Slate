@@ -27,5 +27,6 @@ export type {
   FreedrawElement,
   LineElement,
   RectElement,
+  TextElement,
   ToolType,
 } from './model/types';

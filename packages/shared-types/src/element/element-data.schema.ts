@@ -7,6 +7,9 @@ import {
   LINE_POINTS_MIN,
   SHAPE_SIZE_MAX,
   SHAPE_SIZE_MIN,
+  TEXT_FONT_SIZE_MAX,
+  TEXT_FONT_SIZE_MIN,
+  TEXT_MAX_LENGTH,
 } from './element.constants.js';
 import type { ElementType } from './element.types.js';
 
@@ -81,6 +84,29 @@ const freedrawDataSchema = z.strictObject({
 });
 
 /**
+ * Семейство шрифта — ЗАКРЫТЫЙ enum, не свободная строка: произвольный CSS font-family со стороны
+ * клиента означал бы, что у разных участников доски текст рисуется разными шрифтами (у кого что
+ * установлено), а рукописный стиль фигур (SLT-13) как раз требует одинаковой отрисовки у всех.
+ * Значение — КЛЮЧ ('sans'/'mono'), а не готовая CSS-строка: маппинг ключ → реальный font-family
+ * живёт на клиенте (ElementShape/оверлей, один источник на оба рендера), контракт от него не
+ * зависит. Ровно два значения — этап 1 подключает только системные sans/mono; рукописный шрифт —
+ * отдельная сквозная задача.
+ */
+export const fontFamilySchema = z.enum(['sans', 'mono']);
+
+/**
+ * Текст: НЕ переиспользует чужую схему — геометрия принципиально другая (нет points/width-height,
+ * есть содержимое). `text` — сам текст (перенос только по `\n`, без word-wrap в фиксированной
+ * ширине, см. оверлей), `fontSize`/`fontFamily` — вместе с `stroke` (цвет) полностью определяют
+ * внешний вид у ВСЕХ участников доски одинаково.
+ */
+const textDataSchema = z.strictObject({
+  text: z.string().max(TEXT_MAX_LENGTH),
+  fontSize: z.number().min(TEXT_FONT_SIZE_MIN).max(TEXT_FONT_SIZE_MAX),
+  fontFamily: fontFamilySchema,
+});
+
+/**
  * Соответствие «тип фигуры → форма её геометрии».
  *
  * `satisfies Record<ElementType, ...>` — не украшение: добавят в `elementTypeSchema` новую
@@ -100,6 +126,7 @@ export const ELEMENT_DATA_SCHEMAS = {
   // а не заводим arrowDataSchema-дубликат. Наконечник — это стиль отрисовки, а не геометрия,
   // ему в data делать нечего.
   arrow: lineDataSchema,
+  text: textDataSchema,
 } satisfies Record<ElementType, z.ZodType>;
 
 /** Геометрия элемента после проверки — union по типам фигур. */

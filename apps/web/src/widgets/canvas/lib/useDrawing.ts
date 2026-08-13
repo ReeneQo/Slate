@@ -71,11 +71,17 @@ export function useDrawing(): DrawingController {
 
   const start = useCallback(
     (screen: Point): boolean => {
-      const { selectedTool, viewport, canEdit } = useEditorStore.getState();
+      const { selectedTool, viewport, canEdit, draft, editingTextId } = useEditorStore.getState();
       if (selectedTool === 'select') return false;
       // Роль-гейт (SLT-43): viewer не рисует — тулбар и так скрыт (см. CanvasStage), но обработчик
       // остаётся защищён и от прямого вызова/гонки роли, а не только от отсутствия кнопки в UI.
       if (!canEdit) return false;
+      // Text-оверлей уже открыт (создание ИЛИ ре-редактирование другого текста, SLT-61) — второй
+      // клик инструментом text не должен открыть второй оверлей поверх первого. rect/line/etc.
+      // сюда не попадают: draft/editingTextId у них не бывает одновременно с активным жестом того
+      // же типа (mouseup всегда чистит draft, см. end() ниже), инвариант актуален только для text,
+      // у которого end() НЕ чистит draft (см. ниже).
+      if (selectedTool === 'text' && (draft !== null || editingTextId !== null)) return false;
 
       const point = screenToCanvas(screen, viewport);
       setDraft(createDraft(selectedTool, point));
@@ -118,6 +124,12 @@ export function useDrawing(): DrawingController {
 
     const { draft } = useEditorStore.getState();
     if (!draft) return;
+
+    // Text ломает паттерн «mouseup коммитит или отбрасывает черновик» (SLT-61): клик ставит
+    // текст-курсор, а коммит происходит ПОЗЖЕ, по blur/Escape оверлея, не здесь. Ранний выход ДО
+    // безусловного setDraft(null) ниже — иначе черновик стирался бы раньше, чем оверлей успевает
+    // его подхватить. rect/line/freedraw/arrow эту ветку не проходят и ведут себя как раньше.
+    if (draft.type === 'text') return;
 
     // Клик карандашом без движения — это не «ничего не рисовать» (в отличие от rect/line/ellipse,
     // где isCommittable отсекает нулевой размер), а точка-клякса: дублируем единственную точку,

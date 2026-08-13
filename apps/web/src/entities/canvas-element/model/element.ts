@@ -1,3 +1,5 @@
+import { TEXT_DEFAULT_FONT_FAMILY, TEXT_DEFAULT_FONT_SIZE } from '@slate/shared-types';
+
 import type { Point } from '@/shared/lib/viewport';
 
 import type { DraftElement, ElementType } from './types';
@@ -57,6 +59,16 @@ export function createDraft(type: ElementType, start: Point): DraftElement {
     // поток пополняется по ходу жеста в updateDraftGeometry (append, не перезапись).
     return { type: 'freedraw', ...common, data: { points: [0, 0] } };
   }
+  if (type === 'text') {
+    // НЕ геометрия точек: x/y — позиция клика (не угол драг-рамки), data несёт содержимое и
+    // шрифт. Пустой text — ожидаемое стартовое состояние, оверлей наполнит его вводом; коммит
+    // пустого текста отсекает isCommittable.
+    return {
+      type: 'text',
+      ...common,
+      data: { text: '', fontSize: TEXT_DEFAULT_FONT_SIZE, fontFamily: TEXT_DEFAULT_FONT_FAMILY },
+    };
+  }
   return { type, ...common, data: { width: 0, height: 0 } };
 }
 
@@ -81,6 +93,12 @@ export function updateDraftGeometry(draft: DraftElement, current: Point): DraftE
       data: { points: [...draft.data.points, current.x - draft.x, current.y - draft.y] },
     };
   }
+  if (draft.type === 'text') {
+    // Text не рисуется драгом мыши — геометрию (содержимое) меняет только оверлей ввода.
+    // No-op, а не пропуск вызова: useDrawing.move зовёт эту функцию безусловно на mousemove
+    // для любого не-freedraw черновика, text должен просто пережить вызов без изменений.
+    return draft;
+  }
   return { ...draft, data: { width: current.x - draft.x, height: current.y - draft.y } };
 }
 
@@ -91,8 +109,16 @@ export function updateDraftGeometry(draft: DraftElement, current: Point): DraftE
  */
 export function normalizeBounds(draft: DraftElement): DraftElement {
   // Как и у line: точки относительны x/y старта, Konva.Line/Arrow рисует их так и без
-  // нормализации bbox в x/y — двигать «угол» под freedraw/arrow незачем, тот же приём.
-  if (draft.type === 'line' || draft.type === 'freedraw' || draft.type === 'arrow') return draft;
+  // нормализации bbox в x/y — двигать «угол» под freedraw/arrow незачем, тот же приём. text сюда
+  // же по DRY: x/y — позиция клика, нормализовать нечего (нет драг-рамки с возможным отрицательным
+  // размером); настоящий bbox текста для Transformer'а — забота SLT-62, не этой функции.
+  if (
+    draft.type === 'line' ||
+    draft.type === 'freedraw' ||
+    draft.type === 'arrow' ||
+    draft.type === 'text'
+  )
+    return draft;
 
   const { x, y } = draft;
   const { width, height } = draft.data;
@@ -120,6 +146,11 @@ export function isCommittable(draft: DraftElement): boolean {
     // жест, включая одиночную точку, — на mouseup она превращается в точку-кляксу (см.
     // useDrawing), поэтому годна к коммиту уже при наличии хотя бы одной точки.
     return draft.data.points.length >= 2;
+  }
+  if (draft.type === 'text') {
+    // Пустой текст (в т.ч. только пробелы/переносы) не коммитится — не размер жеста решает,
+    // а непустое содержимое: text не рисуется драгом, MIN_COMMIT_SIZE тут не при чём.
+    return draft.data.text.trim().length > 0;
   }
   return (
     Math.abs(draft.data.width) >= MIN_COMMIT_SIZE && Math.abs(draft.data.height) >= MIN_COMMIT_SIZE

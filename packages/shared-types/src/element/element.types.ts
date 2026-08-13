@@ -17,7 +17,7 @@ import { z } from 'zod';
  * Значение (`elementTypeSchema`), а не только тип: перечень нужен и в рантайме — фронту для
  * панели инструментов, схемам ниже для дискриминации.
  */
-export const elementTypeSchema = z.enum(['rect', 'ellipse', 'line', 'freedraw', 'arrow']);
+export const elementTypeSchema = z.enum(['rect', 'ellipse', 'line', 'freedraw', 'arrow', 'text']);
 
 /** Тип фигуры холста. */
 export type ElementType = z.infer<typeof elementTypeSchema>;

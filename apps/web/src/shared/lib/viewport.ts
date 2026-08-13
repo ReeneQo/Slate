@@ -34,3 +34,16 @@ export function screenToCanvas(screen: Point, viewport: Viewport): Point {
     y: (screen.y - viewport.y) / viewport.scale,
   };
 }
+
+/**
+ * Координаты холста → экранные координаты указателя. Точная инверсия screenToCanvas
+ * (screen = canvas * scale + offset) — нужна текстовому оверлею (SLT-61): HTML-элемент ввода
+ * живёт в DOM-координатах поверх Stage, а позиция редактируемого текста хранится в координатах
+ * холста, поэтому оверлей обязан пересчитывать её при каждом пане/зуме.
+ */
+export function canvasToScreen(canvas: Point, viewport: Viewport): Point {
+  return {
+    x: canvas.x * viewport.scale + viewport.x,
+    y: canvas.y * viewport.scale + viewport.y,
+  };
+}

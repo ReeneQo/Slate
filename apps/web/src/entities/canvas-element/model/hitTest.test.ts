@@ -7,6 +7,7 @@ import type {
   FreedrawElement,
   LineElement,
   RectElement,
+  TextElement,
 } from './types';
 
 const base = {
@@ -50,6 +51,20 @@ const dot: FreedrawElement = {
   x: 0,
   y: 0,
   data: { points: [10, 10, 10, 10] },
+};
+const text: TextElement = {
+  ...base,
+  type: 'text',
+  x: 0,
+  y: 0,
+  data: { text: 'hello', fontSize: 20, fontFamily: 'sans' },
+};
+const multilineText: TextElement = {
+  ...base,
+  type: 'text',
+  x: 0,
+  y: 0,
+  data: { text: 'hello\nworld again', fontSize: 20, fontFamily: 'sans' },
 };
 
 describe('hitTestElement — rect', () => {
@@ -114,5 +129,27 @@ describe('hitTestElement — freedraw', () => {
   it('точка-клякса (две совпадающие точки) тоже попадает по близости', () => {
     expect(hitTestElement(dot, { x: 10.5, y: 10.5 })).toBe(true);
     expect(hitTestElement(dot, { x: 30, y: 30 })).toBe(false);
+  });
+});
+
+describe('hitTestElement — text (приближённый bbox, не polyline)', () => {
+  it('попадает внутрь приближённого bbox однострочного текста', () => {
+    // 'hello' (5 симв) * fontSize 20 * 0.6 = 60 ширины; 1 строка * 20 * 1.2 = 24 высоты.
+    expect(hitTestElement(text, { x: 30, y: 12 })).toBe(true);
+  });
+
+  it('не попадает за пределами приближённого bbox', () => {
+    expect(hitTestElement(text, { x: 200, y: 12 })).toBe(false);
+  });
+
+  it('tolerance расширяет зону попадания за границу bbox', () => {
+    expect(hitTestElement(text, { x: 65, y: 12 })).toBe(false);
+    expect(hitTestElement(text, { x: 65, y: 12 }, 10)).toBe(true);
+  });
+
+  it('многострочный текст: bbox растёт по высоте и по самой длинной строке', () => {
+    // Самая длинная строка 'world again' (11 симв) даёт ширину, вторая (короткая) строка её не сужает.
+    expect(hitTestElement(multilineText, { x: 100, y: 30 })).toBe(true);
+    expect(hitTestElement(multilineText, { x: 100, y: 60 })).toBe(false);
   });
 });

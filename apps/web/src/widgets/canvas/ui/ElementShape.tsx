@@ -1,10 +1,11 @@
 import type { KonvaEventObject, Node } from 'konva/lib/Node';
 import type { ReactElement } from 'react';
-import { Arrow, Ellipse, Line, Rect } from 'react-konva';
+import { Arrow, Ellipse, Line, Rect, Text } from 'react-konva';
 
 import type { CanvasElement, DraftElement } from '@/entities/canvas-element';
 import type { Point } from '@/shared/lib/viewport';
 
+import { resolveFontFamily, TEXT_LINE_HEIGHT, TEXT_PADDING } from '../lib/textMetrics';
 import { HIT_PADDING_PX } from '../lib/useSelection';
 
 /**
@@ -162,6 +163,30 @@ export function ElementShape({
           lineCap="round"
           lineJoin="round"
           {...common}
+        />
+      );
+
+    case 'text':
+      // НЕ спредим `common`: у text нет заливки/обводки в смысле остальных фигур — common.fill/
+      // common.stroke/common.hitStrokeWidth здесь не при чём (Konva.Text.stroke рисует ОБВОДКУ
+      // ГЛИФОВ, не цвет текста). Цвет текста = element.stroke (развилка Р5, зафиксирована:
+      // Excalidraw-семантика). Без явного width Konva.Text не переносит по ширине — перенос
+      // только по `\n`, ровно как задумано (нет word-wrap в фиксированной ширине).
+      return (
+        <Text
+          ref={shapeRef}
+          x={element.x}
+          y={element.y}
+          text={element.data.text}
+          fontSize={element.data.fontSize}
+          fontFamily={resolveFontFamily(element.data.fontFamily)}
+          lineHeight={TEXT_LINE_HEIGHT}
+          padding={TEXT_PADDING}
+          fill={element.stroke}
+          opacity={element.opacity}
+          rotation={element.angle}
+          draggable={draggable}
+          onDragEnd={handleDragEnd}
         />
       );
 
