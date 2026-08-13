@@ -153,3 +153,48 @@ describe('hitTestElement — text (приближённый bbox, не polyline)
     expect(hitTestElement(multilineText, { x: 100, y: 60 })).toBe(false);
   });
 });
+
+describe('hitTestElement — повёрнутые фигуры (SLT-63)', () => {
+  it('rect повёрнут на 90° вокруг угла рамки (пивот x/y) — попадание следует за поворотом', () => {
+    // (50,30) внутри НЕвращённого rect. Поворот на 90° вокруг пивота (10,10) переносит эту
+    // локальную точку в мировую (-10,50) — та же точка ЛОКАЛЬНО, просто в повёрнутой системе.
+    const rotatedRect: RectElement = { ...rect, angle: Math.PI / 2 };
+    expect(hitTestElement(rotatedRect, { x: -10, y: 50 })).toBe(true);
+    // Исходные координаты (50,30) больше НЕ совпадают с фигурой — геометрия уехала поворотом.
+    expect(hitTestElement(rotatedRect, { x: 50, y: 30 })).toBe(false);
+  });
+
+  it('ellipse повёрнут на 90° вокруг центра (пивот — не угол, а центр)', () => {
+    const asymmetricEllipse: EllipseElement = {
+      ...base,
+      type: 'ellipse',
+      x: 0,
+      y: 0,
+      data: { width: 100, height: 40 },
+    };
+    // (90,20) внутри НЕвращённого эллипса (центр 50,20, rx=50,ry=20). После поворота на 90° вокруг
+    // центра та же локальная точка оказывается в мировых (50,60).
+    const rotated: EllipseElement = { ...asymmetricEllipse, angle: Math.PI / 2 };
+    expect(hitTestElement(rotated, { x: 50, y: 60 })).toBe(true);
+    // Исходная точка (90,20) после поворота уже мимо повёрнутого эллипса.
+    expect(hitTestElement(rotated, { x: 90, y: 20 })).toBe(false);
+  });
+
+  it('rect повёрнут на некруглый угол (30°) — sin/cos ≠ 0/1, не только осевой случай', () => {
+    // 90° не исключает ошибку знака (проверено вручную), но некруглый угол — более общая гарантия:
+    // мировую точку считаем той же прямой формулой поворота, что и unrotatePoint, только вперёд
+    // (+angle вместо -angle), поэтому тест независим от хардкода конкретных чисел.
+    const angle = Math.PI / 6;
+    const pivot = { x: rect.x, y: rect.y }; // rect: пивот — угол рамки
+    const local = { x: 60, y: 20 }; // внутри невращённого rect (x:10..110, y:10..60)
+    const dx = local.x - pivot.x;
+    const dy = local.y - pivot.y;
+    const world = {
+      x: pivot.x + dx * Math.cos(angle) - dy * Math.sin(angle),
+      y: pivot.y + dx * Math.sin(angle) + dy * Math.cos(angle),
+    };
+
+    const rotatedRect: RectElement = { ...rect, angle };
+    expect(hitTestElement(rotatedRect, world)).toBe(true);
+  });
+});
