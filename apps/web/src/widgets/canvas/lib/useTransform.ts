@@ -4,7 +4,12 @@ import type { Box } from 'konva/lib/shapes/Transformer';
 import type { RefObject } from 'react';
 import { useCallback } from 'react';
 
-import { applyResizeTransform, useDocumentStore } from '@/entities/canvas-element';
+import {
+  applyResizeTransform,
+  beginTransaction,
+  endTransaction,
+  useDocumentStore,
+} from '@/entities/canvas-element';
 import { degToRad, normalizeAngle } from '@/shared/lib/angle';
 
 import { findNodeId } from './nodeRegistry';
@@ -80,6 +85,10 @@ export function useTransform(
     // зависимость от этого совпадения полностью.
     const { elements, updateElement } = useDocumentStore.getState();
 
+    // Один жест Transformer'а (resize ИЛИ rotate, одиночный или multi-select) = один шаг undo
+    // (SLT-65, Р2): begin/end оборачивают весь forEach безусловно, даже для одного элемента —
+    // транзакция из одной операции ничем не хуже соло-записи, а код проще без ветвления по count.
+    beginTransaction();
     transformer.nodes().forEach((node) => {
       const id = findNodeId(nodeMap.current, node);
       const element = id ? elements[id] : undefined;
@@ -111,6 +120,7 @@ export function useTransform(
 
       updateElement(id, { ...resizePatch, angle });
     });
+    endTransaction();
   }, [transformerRef, nodeMap]);
 
   return {

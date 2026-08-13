@@ -7,6 +7,7 @@ import {
   setDocumentChangeListener,
   toUpsertInput,
   useDocumentStore,
+  useHistoryStore,
 } from '@/entities/canvas-element';
 import {
   type AppSocket,
@@ -89,8 +90,10 @@ export function useCanvasSync(boardId: string): CanvasSyncState {
   useEffect(() => {
     const controller = new AbortController();
 
-    // Открываем доску с чистого листа — прежняя доска не должна протечь.
+    // Открываем доску с чистого листа — прежняя доска не должна протечь. История (SLT-65) сбрасывается
+    // тем же приёмом: своя история одной доски не должна быть доступна для undo/redo на другой.
     useDocumentStore.getState().reset();
+    useHistoryStore.getState().reset();
     setHydration('loading');
     setSaveError(null);
 
@@ -109,8 +112,10 @@ export function useCanvasSync(boardId: string): CanvasSyncState {
 
     return () => {
       controller.abort();
-      // reset и на размонтировании: следующий монтаж (другая доска) начнёт с пустого документа.
+      // reset и на размонтировании: следующий монтаж (другая доска) начнёт с пустого документа
+      // и пустой истории.
       useDocumentStore.getState().reset();
+      useHistoryStore.getState().reset();
     };
   }, [boardId, reloadToken]);
 

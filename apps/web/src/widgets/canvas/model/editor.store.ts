@@ -48,6 +48,14 @@ interface EditorState {
    * под драг в любую сторону), готовы к прямому рендеру Konva.Rect.
    */
   marqueeRect: { x: number; y: number; width: number; height: number } | null;
+  /**
+   * Идёт ли сейчас нативный Konva drag фигуры (одиночный или group-drag, SLT-64) — читается
+   * ТОЛЬКО гвардом undo/redo/delete хоткеев (SLT-65), чтобы не перехватывать клавишу посреди
+   * незавершённого жеста. Параллельно локальному `isDraggingShape` в useCanvasInteraction (тот
+   * держит курсор «move» на весь жест) — НЕ заменяет его: consolidation двух drag-флагов не входит
+   * в объём SLT-65, оставлено мелким долгом.
+   */
+  isDraggingElement: boolean;
 }
 
 interface EditorActions {
@@ -59,6 +67,7 @@ interface EditorActions {
   setEditingTextId: (id: string | null) => void;
   clearEditingTextId: () => void;
   setMarqueeRect: (rect: EditorState['marqueeRect']) => void;
+  setDraggingElement: (isDragging: boolean) => void;
 }
 
 export type EditorStore = EditorState & EditorActions;
@@ -74,6 +83,7 @@ export const useEditorStore = create<EditorStore>()(
     canEdit: false,
     editingTextId: null,
     marqueeRect: null,
+    isDraggingElement: false,
 
     setTool: (tool) =>
       set((state) => {
@@ -127,6 +137,11 @@ export const useEditorStore = create<EditorStore>()(
     setMarqueeRect: (rect) =>
       set((state) => {
         state.marqueeRect = rect;
+      }),
+
+    setDraggingElement: (isDragging) =>
+      set((state) => {
+        state.isDraggingElement = isDragging;
       }),
   })),
 );

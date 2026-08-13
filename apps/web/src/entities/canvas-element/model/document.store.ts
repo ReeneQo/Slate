@@ -58,6 +58,53 @@ function emitChange(change: DocumentChange): void {
   changeListener?.(change);
 }
 
+/**
+ * Слушатель истории (SLT-65) — так же единственный и так же не уведомляется на hydrate/reset/
+ * remote-путях, как changeListener выше, но сообщает НЕ то, что отправить на сервер, а инверсию
+ * для undo: какие элементы появились (→ инверсия «удалить»), какой был патч ДО апдейта (→
+ * инверсия «применить старое»), какие элементы целиком исчезли (→ инверсия «пересоздать»).
+ *
+ * Регистрируется РАЗ на весь app lifecycle (history.store.ts, модульная область видимости) — в
+ * отличие от changeListener, который живёт по одному на смонтированную доску (autosave-
+ * оркестратор перевешивает его на каждый маунт). Истории не нужен boardId, поэтому и
+ * перерегистрация не нужна: document.store.ts НЕ импортирует history.store.ts (обратная ссылка
+ * ушла бы в цикл, `import/no-cycle`), history.store.ts импортирует document.store.ts и сам
+ * регистрируется здесь через setHistoryRecorder при загрузке модуля.
+ */
+export interface DocumentHistoryRecorder {
+  /** Элементы созданы локально (commitElement — всегда один; restoreElements — может быть много). */
+  onCreated: (elements: CanvasElement[]) => void;
+  /** Элемент обновлён локально; patch — СТАРЫЕ значения ровно тех полей, что были в новом патче. */
+  onUpdated: (id: string, patch: ElementPatch) => void;
+  /** Элементы удалены локально, ПОЛНЫЕ снимки (для восстановления инверсией). */
+  onDeleted: (elements: CanvasElement[]) => void;
+}
+
+let historyRecorder: DocumentHistoryRecorder | null = null;
+
+export function setHistoryRecorder(recorder: DocumentHistoryRecorder | null): void {
+  historyRecorder = recorder;
+}
+
+/**
+ * Старые значения ровно тех полей, что затронуты патчем (для инверсии update, SLT-65). `element` —
+ * снимок ДО применения патча (см. вызов в updateElement, снят через get() до set() — immer COW
+ * гарантирует, что это НЕ мутируемая draft-ссылка, а честно старый объект).
+ */
+function snapshotPatchFields(element: CanvasElement, patch: ElementPatch): ElementPatch {
+  const before: ElementPatch = {};
+  if ('x' in patch) before.x = element.x;
+  if ('y' in patch) before.y = element.y;
+  if ('angle' in patch) before.angle = element.angle;
+  if ('opacity' in patch) before.opacity = element.opacity;
+  if ('stroke' in patch) before.stroke = element.stroke;
+  if ('fill' in patch) before.fill = element.fill;
+  if ('strokeWidth' in patch) before.strokeWidth = element.strokeWidth;
+  if ('order' in patch) before.order = element.order;
+  if ('data' in patch) before.data = element.data;
+  return before;
+}
+
 interface DocumentActions {
   /** Переносит черновик в документ: нормализует, генерит id (uuid v7) и order, добавляет в z-order. */
   commitElement: (draft: DraftElement) => void;
@@ -67,6 +114,14 @@ interface DocumentActions {
    * elementIds одним атомарным set. «Удалить один» — это deleteElements([id]).
    */
   deleteElements: (ids: string[]) => void;
+  /**
+   * Пересоздаёт готовые элементы КАК ЕСТЬ — с их собственными id/order (SLT-65). В отличие от
+   * commitElement (всегда новый id), нужен для инверсии: undo(delete) воскрешает снятые элементы
+   * под теми же id, redo(create) повторяет создание под тем же id, что и в первый раз. Эмитит
+   * `create` на каждый элемент — WS уже поддерживает явный id в element_create (та же тройная
+   * семантика create/replace/resurrect, что у HTTP PUT), новый транспорт не нужен.
+   */
+  restoreElements: (elements: CanvasElement[]) => void;
   /**
    * Заливает элементы с сервера (гидрация при открытии доски). Полностью заменяет документ и
    * восстанавливает z-order сортировкой по `order`. НЕ уведомляет слушателя — см. changeListener.
@@ -153,9 +208,14 @@ export const useDocumentStore = create<DocumentStore>()(
       });
 
       emitChange({ type: 'create', element });
+      historyRecorder?.onCreated([element]);
     },
 
     updateElement: (id, patch) => {
+      // Снимок ДО set() (SLT-65, П3): get() отдаёт предыдущее, ещё не тронутое immer-состояние —
+      // честная старая ссылка, не draft-proxy, который читался бы изнутри set() и стал бы
+      // небезопасен после финализации producer'а.
+      const before = get().elements[id];
       let applied = false;
       set((state) => {
         const element = state.elements[id];
@@ -164,31 +224,57 @@ export const useDocumentStore = create<DocumentStore>()(
         applied = true;
       });
 
-      if (applied) emitChange({ type: 'update', id, patch });
+      if (applied) {
+        emitChange({ type: 'update', id, patch });
+        if (before) historyRecorder?.onUpdated(id, snapshotPatchFields(before, patch));
+      }
     },
 
     deleteElements: (ids) => {
       if (ids.length === 0) return; // пустой ввод — не дёргаем ни подписчиков, ни сеть
 
-      // Set для O(1) проверки принадлежности. removed — только реально существовавшие id (со
-      // снятой version, SLT-39), чтобы на сервер не улетел DELETE по несуществующему элементу и
-      // чтобы version была под рукой у слушателя ПОСЛЕ удаления — сам элемент к этому моменту
-      // уже вычищен из elements, читать version оттуда будет поздно.
+      // Set для O(1) проверки принадлежности. Снимаем ДО set() (SLT-65, П3, тот же приём, что в
+      // updateElement) — и компактный {id,version} для WS (SLT-39), и ПОЛНЫЙ элемент для истории
+      // (инверсия delete — пересоздать снятое целиком, а не только id/version).
       const toDelete = new Set(ids);
+      const { elements, elementIds } = get();
       const removed: { id: string; version: number }[] = [];
+      const removedElements: CanvasElement[] = [];
+      for (const id of elementIds) {
+        const element = elements[id];
+        if (toDelete.has(id) && element) {
+          removed.push({ id, version: element.version });
+          removedElements.push(element);
+        }
+      }
 
       set((state) => {
-        for (const id of state.elementIds) {
-          const element = state.elements[id];
-          if (toDelete.has(id) && element) removed.push({ id, version: element.version });
-        }
         // Оба контейнера правим в одном set — между кадрами нет висячего id (рендер достал бы
         // undefined) и Transformer на мёртвом узле.
         for (const id of toDelete) delete state.elements[id];
         state.elementIds = state.elementIds.filter((id) => !toDelete.has(id));
       });
 
-      if (removed.length > 0) emitChange({ type: 'delete', deletions: removed });
+      if (removed.length > 0) {
+        emitChange({ type: 'delete', deletions: removed });
+        historyRecorder?.onDeleted(removedElements);
+      }
+    },
+
+    restoreElements: (elements) => {
+      if (elements.length === 0) return;
+
+      set((state) => {
+        for (const element of elements) {
+          if (!(element.id in state.elements)) state.elementIds.push(element.id);
+          state.elements[element.id] = element;
+        }
+      });
+
+      for (const element of elements) {
+        emitChange({ type: 'create', element });
+      }
+      historyRecorder?.onCreated(elements);
     },
 
     hydrate: (elements) =>

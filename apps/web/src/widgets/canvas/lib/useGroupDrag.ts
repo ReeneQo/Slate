@@ -1,7 +1,7 @@
 import type { KonvaEventObject, Node } from 'konva/lib/Node';
 import { type RefObject, useCallback, useRef } from 'react';
 
-import { useDocumentStore } from '@/entities/canvas-element';
+import { beginTransaction, endTransaction, useDocumentStore } from '@/entities/canvas-element';
 
 import { useEditorStore } from '../model/editor.store';
 import { computeGroupDragPositions, type GroupDragSibling } from './groupDrag';
@@ -69,6 +69,11 @@ export function useGroupDrag(nodeMap: RefObject<Map<string, Node>>): GroupDragCo
         siblingsModel,
         siblingsNode,
       };
+      // Открываем транзакцию истории ЗДЕСЬ, до движения (SLT-65): окно перекрывает и коммит
+      // ведущего узла (ElementShape → ShapeRenderer.updateElement, target-фаза, срабатывает
+      // раньше) и коммит сиблингов ниже (bubble-фаза, срабатывает позже) — оба попадают в одну
+      // транзакцию, один Ctrl+Z отменяет группу целиком.
+      beginTransaction();
     },
     [nodeMap],
   );
@@ -104,6 +109,7 @@ export function useGroupDrag(nodeMap: RefObject<Map<string, Node>>): GroupDragCo
     for (const position of computeGroupDragPositions(active.siblingsModel, dx, dy)) {
       updateElement(position.id, { x: position.x, y: position.y });
     }
+    endTransaction();
   }, []);
 
   return { onDragStart, onDragMove, onDragEnd };
