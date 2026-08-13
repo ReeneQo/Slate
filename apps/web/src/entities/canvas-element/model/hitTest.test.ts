@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { hitTestElement } from './hitTest';
-import type { EllipseElement, LineElement, RectElement } from './types';
+import type { EllipseElement, FreedrawElement, LineElement, RectElement } from './types';
 
 const base = {
   id: 'x',
@@ -24,6 +24,20 @@ const ellipse: EllipseElement = {
   data: { width: 100, height: 100 },
 };
 const line: LineElement = { ...base, type: 'line', x: 0, y: 0, data: { points: [0, 0, 100, 0] } };
+const freedraw: FreedrawElement = {
+  ...base,
+  type: 'freedraw',
+  x: 0,
+  y: 0,
+  data: { points: [0, 0, 50, 0, 100, 0] },
+};
+const dot: FreedrawElement = {
+  ...base,
+  type: 'freedraw',
+  x: 0,
+  y: 0,
+  data: { points: [10, 10, 10, 10] },
+};
 
 describe('hitTestElement — rect', () => {
   it('попадает внутрь рамки даже при прозрачной заливке', () => {
@@ -62,5 +76,20 @@ describe('hitTestElement — line', () => {
   it('tolerance добавляется к порогу расстояния', () => {
     expect(hitTestElement(line, { x: 50, y: 5 })).toBe(false);
     expect(hitTestElement(line, { x: 50, y: 5 }, 5)).toBe(true);
+  });
+});
+
+describe('hitTestElement — freedraw', () => {
+  it('попадает по близости к любому сегменту ломаной (переиспользует isNearPolyline line)', () => {
+    expect(hitTestElement(freedraw, { x: 75, y: 0.5 })).toBe(true);
+  });
+
+  it('не попадает вдали от ломаной', () => {
+    expect(hitTestElement(freedraw, { x: 75, y: 20 })).toBe(false);
+  });
+
+  it('точка-клякса (две совпадающие точки) тоже попадает по близости', () => {
+    expect(hitTestElement(dot, { x: 10.5, y: 10.5 })).toBe(true);
+    expect(hitTestElement(dot, { x: 30, y: 30 })).toBe(false);
   });
 });

@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
 import {
+  FREEDRAW_POINTS_MAX,
+  FREEDRAW_POINTS_MIN,
   LINE_POINTS_MAX,
   LINE_POINTS_MIN,
   SHAPE_SIZE_MAX,
@@ -62,6 +64,23 @@ const lineDataSchema = z.strictObject({
 });
 
 /**
+ * Freedraw (карандаш): та же плоская форма `[x1, y1, x2, y2, ...]`, что и у линии, — НЕ
+ * переиспользуем `lineDataSchema` напрямую, а заводим отдельную схему с собственными границами
+ * (`FREEDRAW_POINTS_MIN/MAX`, см. element.constants.ts): рисование от руки копит на порядки
+ * больше точек, чем клик-драг линии, и связывать эти пределы значило бы либо душить линию, либо
+ * пускать в неё карандашные объёмы.
+ */
+const freedrawDataSchema = z.strictObject({
+  points: z
+    .array(z.number())
+    .min(FREEDRAW_POINTS_MIN)
+    .max(FREEDRAW_POINTS_MAX)
+    .refine((points) => points.length % 2 === 0, {
+      message: 'координаты идут парами x/y, длина массива должна быть чётной',
+    }),
+});
+
+/**
  * Соответствие «тип фигуры → форма её геометрии».
  *
  * `satisfies Record<ElementType, ...>` — не украшение: добавят в `elementTypeSchema` новую
@@ -76,6 +95,7 @@ export const ELEMENT_DATA_SCHEMAS = {
   rect: boxDataSchema,
   ellipse: boxDataSchema,
   line: lineDataSchema,
+  freedraw: freedrawDataSchema,
 } satisfies Record<ElementType, z.ZodType>;
 
 /** Геометрия элемента после проверки — union по типам фигур. */

@@ -31,9 +31,11 @@ export function hitTestElement(element: CanvasElement, point: Point, tolerance =
       return isInsideEllipse(point, cx, cy, rx, ry, tolerance);
     }
 
-    case 'line': {
-      // Линия «тонкая»: попаданием считаем близость к любому её отрезку.
-      // Порог = половина толщины линии + общая слабина.
+    case 'line':
+    case 'freedraw': {
+      // Линия и freedraw — обе тонкие ломаные: попаданием считаем близость к любому сегменту.
+      // isNearPolyline уже перебирает ВСЕ сегменты points (не хардкод на две точки), поэтому
+      // freedraw переиспользует её без изменений — тот же порог = половина толщины + слабина.
       const threshold = tolerance + element.strokeWidth / 2;
       return isNearPolyline(point, element.x, element.y, element.data.points, threshold);
     }

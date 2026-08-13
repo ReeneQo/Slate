@@ -7,6 +7,13 @@ import type { Point } from '@/shared/lib/viewport';
 
 import { HIT_PADDING_PX } from '../lib/useSelection';
 
+/**
+ * Сглаживание ломаной freedraw через Konva-кривую по контрольным точкам. НЕ perfect-freehand
+ * (переменная толщина по нажиму/скорости) — отдельная будущая задача; сейчас это чисто
+ * визуальная примочка поверх той же полилинии, что и у line.
+ */
+const FREEDRAW_TENSION = 0.4;
+
 interface ElementShapeProps {
   /** Закоммиченный элемент или черновик-превью — рендерятся одинаково. */
   element: CanvasElement | DraftElement;
@@ -64,7 +71,9 @@ export function ElementShape({
   // в экранных px при любом зуме — как и курсор.
   const tolerance = HIT_PADDING_PX / scale;
   const hitStrokeWidth =
-    element.type === 'line' ? 2 * tolerance + element.strokeWidth : 2 * tolerance;
+    element.type === 'line' || element.type === 'freedraw'
+      ? 2 * tolerance + element.strokeWidth
+      : 2 * tolerance;
 
   const common = {
     stroke: element.stroke,
@@ -109,6 +118,24 @@ export function ElementShape({
       // points относительны x/y — Konva.Line ровно так их и трактует.
       return (
         <Line ref={shapeRef} x={element.x} y={element.y} points={element.data.points} {...common} />
+      );
+
+    case 'freedraw':
+      // Та же геометрия, что у line (points относительны x/y), плюс tension/lineCap/lineJoin —
+      // сглаживают ломаную под рукописный штрих. closed/fill не задаём: freedraw — контур, не
+      // область. Точка-клякса (points из двух совпадающих координат, см. useDrawing) рисуется
+      // тем же Line: tension на паре одинаковых точек не ломает рендер, lineCap="round" даёт круг.
+      return (
+        <Line
+          ref={shapeRef}
+          x={element.x}
+          y={element.y}
+          points={element.data.points}
+          tension={FREEDRAW_TENSION}
+          lineCap="round"
+          lineJoin="round"
+          {...common}
+        />
       );
 
     default:

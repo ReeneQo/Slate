@@ -147,6 +147,7 @@ enum ElementType {
   rect
   ellipse
   line
+  freedraw
 }
 
 enum BoardMemberRole {

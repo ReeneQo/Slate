@@ -9,6 +9,7 @@ export {
 export {
   createDraft,
   DEFAULT_STYLE,
+  FREEDRAW_MIN_DISTANCE,
   isCommittable,
   normalizeBounds,
   SCHEMA_VERSION,
@@ -22,6 +23,7 @@ export type {
   DraftElement,
   ElementType,
   EllipseElement,
+  FreedrawElement,
   LineElement,
   RectElement,
   ToolType,
