@@ -57,7 +57,7 @@ export function CanvasStage(): ReactElement {
     return callback;
   }, []);
 
-  const { cursor, handlers, isPanMode } = useCanvasInteraction();
+  const { cursor, handlers, isPanMode } = useCanvasInteraction(nodeMap);
   // Клавиатурный ввод холста (Delete/Backspace → удаление выделения). Отдельный
   // window-listener, поэтому Stage-фокус не нужен.
   useCanvasHotkeys();
