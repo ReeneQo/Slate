@@ -149,6 +149,7 @@ enum ElementType {
   line
   freedraw
   arrow
+  text
 }
 
 enum BoardMemberRole {
