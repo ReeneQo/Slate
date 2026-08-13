@@ -7,6 +7,7 @@ import type { Point } from '@/shared/lib/viewport';
 
 import { useEditorStore } from '../model/editor.store';
 import { useDrawing } from './useDrawing';
+import { useMarquee } from './useMarquee';
 import { useSelection } from './useSelection';
 import { wheelToZoomFactor, zoomToPoint } from './zoom';
 
@@ -64,6 +65,7 @@ export interface CanvasInteraction {
 export function useCanvasInteraction(): CanvasInteraction {
   const drawing = useDrawing();
   const { selectAt, findAt } = useSelection();
+  const marquee = useMarquee();
   const setViewport = useEditorStore((state) => state.setViewport);
   const selectedTool = useEditorStore((state) => state.selectedTool);
   const setEditingTextId = useEditorStore((state) => state.setEditingTextId);
@@ -139,18 +141,22 @@ export function useCanvasInteraction(): CanvasInteraction {
 
       if (button !== LEFT_BUTTON) return;
 
-      // Select-режим: клик ТОЛЬКО выделяет. Сам drag ведёт нативный draggable узла
-      // (Konva разводит клик от перетаскивания порогом смещения) — программный
-      // startDrag убран, из-за него фигура липла к курсору без удержания кнопки.
-      // Позицию в стор коммитит onDragEnd. Пустой клик (null) — снятие выделения.
+      // Select-режим: клик ТОЛЬКО выделяет (+ shift — toggle, SLT-64). Сам drag ведёт нативный
+      // draggable узла (Konva разводит клик от перетаскивания порогом смещения) — программный
+      // startDrag убран, из-за него фигура липла к курсору без удержания кнопки. Позицию в стор
+      // коммитит onDragEnd. Пустой клик БЕЗ shift (id === null) — снимает выделение и, поскольку
+      // это ещё и потенциальное начало тяги, стартует marquee (решится на mouseup — реальная тяга
+      // или просто клик, см. useMarquee.end и MIN_MARQUEE_SIZE). Пустой клик С shift — no-op,
+      // marquee по решению точки сверки shift игнорирует.
       if (selectedTool === 'select') {
-        selectAt(pointer);
+        const id = selectAt(pointer, e.evt.shiftKey);
+        if (id === null && !e.evt.shiftKey) marquee.start(pointer);
         return;
       }
 
       drawing.start(pointer);
     },
-    [isSpacePressed, selectedTool, selectAt, drawing],
+    [isSpacePressed, selectedTool, selectAt, marquee, drawing],
   );
 
   const onMouseMove = useCallback(
@@ -170,17 +176,23 @@ export function useCanvasInteraction(): CanvasInteraction {
         return;
       }
 
-      // Select-режим: подсвечиваем курсором фигуру под указателем (её можно тащить).
-      // findAt дёшев (O(n) на кадр без hit-canvas), а setState тем же значением
-      // React гасит без ре-рендера — курсор меняется только на границе фигуры.
+      // Select-режим: если тянем marquee (стартовала на mousedown по пустому месту) — обновляем
+      // рамку, а не hover-курсор (наведение на фигуру ПОД тянущейся рамкой сейчас не при чём).
+      // Иначе — подсвечиваем курсором фигуру под указателем (её можно тащить). findAt дёшев
+      // (O(n) на кадр без hit-canvas), а setState тем же значением React гасит без ре-рендера —
+      // курсор меняется только на границе фигуры.
       if (selectedTool === 'select') {
+        if (useEditorStore.getState().marqueeRect !== null) {
+          marquee.move(pointer);
+          return;
+        }
         setIsHoveringShape(findAt(pointer) !== null);
         return;
       }
 
       drawing.move(pointer);
     },
-    [isPanning, selectedTool, findAt, drawing, setViewport],
+    [isPanning, selectedTool, findAt, marquee, drawing, setViewport],
   );
 
   const endInteraction = useCallback((): void => {
@@ -189,7 +201,9 @@ export function useCanvasInteraction(): CanvasInteraction {
       setIsPanning(false);
     }
     drawing.end();
-  }, [isPanning, drawing]);
+    // No-op, если marquee не начат (marqueeRect уже null) — безопасно звать всегда, как drawing.end().
+    marquee.end();
+  }, [isPanning, drawing, marquee]);
 
   // Уводя курсор со Stage, завершаем жест И гасим hover — иначе «move» залипнет.
   const onMouseLeave = useCallback((): void => {
