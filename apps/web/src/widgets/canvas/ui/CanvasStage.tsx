@@ -15,6 +15,7 @@ import { useEditorStore } from '../model/editor.store';
 import { ElementShape } from './ElementShape';
 import { RemoteCursorsLayer } from './RemoteCursorsLayer';
 import { ShapeRenderer } from './ShapeRenderer';
+import { TextEditor } from './TextEditor';
 
 /**
  * Холст-шелл: связывает Konva Stage со сторами. Рендерит фигуры ИЗ document-стора
@@ -69,6 +70,7 @@ export function CanvasStage(): ReactElement {
   const setTool = useEditorStore((state) => state.setTool);
   const selectedElementIds = useEditorStore(useShallow((state) => state.selectedElementIds));
   const canEdit = useEditorStore((state) => state.canEdit);
+  const editingTextId = useEditorStore((state) => state.editingTextId);
   const elementIds = useDocumentStore(useShallow((state) => state.elementIds));
 
   // Фигуры таскаются нативным Konva draggable, но только в select-режиме, вне pan и при праве на
@@ -109,16 +111,27 @@ export function CanvasStage(): ReactElement {
           {...handlers}
         >
           <Layer>
-            {elementIds.map((id) => (
-              <ShapeRenderer
-                key={id}
-                id={id}
-                shapeRef={registerNode(id)}
-                draggable={shapesDraggable}
-                scale={viewport.scale}
-              />
-            ))}
-            {draft && <ElementShape element={draft} scale={viewport.scale} />}
+            {elementIds
+              // Элемент, который ПРЯМО СЕЙЧАС правит текстовый оверлей (SLT-61), не рисуем здесь —
+              // иначе под оверлеем был бы виден committed Konva.Text со СТАРЫМ текстом, пока
+              // textarea поверх него показывает новый ввод (два разных текста друг на друге).
+              // Оверлей — единственный видимый источник правды на время редактирования.
+              .filter((id) => id !== editingTextId)
+              .map((id) => (
+                <ShapeRenderer
+                  key={id}
+                  id={id}
+                  shapeRef={registerNode(id)}
+                  draggable={shapesDraggable}
+                  scale={viewport.scale}
+                />
+              ))}
+            {/* text-черновик не рисуем как Konva-превью — тот же аргумент, что и выше: оверлей уже
+                показывает вводимый текст, дублировать его в canvas не нужно (и второй экземпляр
+                неизбежно чуть разъедется по суб-пиксельному рендеру с DOM-текстом). */}
+            {draft && draft.type !== 'text' && (
+              <ElementShape element={draft} scale={viewport.scale} />
+            )}
             {/* Только рамка: ресайз/поворот/ручки выключены (этап 1 их не делает). */}
             <Transformer
               ref={transformerRef}
@@ -132,6 +145,10 @@ export function CanvasStage(): ReactElement {
           </Layer>
           <RemoteCursorsLayer scale={viewport.scale} />
         </Stage>
+        {/* Сиблинг Stage, НЕ внутри него: Konva рендерит canvas, не DOM — HTML textarea обязана
+            жить рядом, абсолютно спозиционированной поверх (см. TextEditor.tsx). Идёт ПОСЛЕ
+            Stage в DOM-порядке — по умолчанию оказывается выше него по z, без явного z-index. */}
+        <TextEditor />
       </div>
       {/* Роль-гейт (SLT-43): viewer не рисует — тулбар инструментов рисования скрыт целиком,
           а не задизейблен по кнопке (единый флаг, не размазанный if по элементам). */}

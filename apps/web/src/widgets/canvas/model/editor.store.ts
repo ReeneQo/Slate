@@ -31,6 +31,16 @@ interface EditorState {
    * тот же безопасный дефолт, что и у `deriveCanEdit(undefined)`.
    */
   canEdit: boolean;
+  /**
+   * id закоммиченного text-элемента, который сейчас ре-редактируется оверлеем (SLT-61,
+   * dblclick). Отдельно от `draft`: `draft` — путь СОЗДАНИЯ (фигуры ещё нет в document-сторе,
+   * id нет вовсе), `editingTextId` — путь РЕДАКТИРОВАНИЯ существующей, уже закоммиченной фигуры
+   * по id. Смешивать их в одном поле означало бы различать «create vs edit» по наличию/отсутствию
+   * id внутри значения — источник ошибок при рефакторинге; так инвариант виден в самой форме
+   * стора. Ровно одно из двух активно одновременно — это обеспечивают вызывающие (см.
+   * useDrawing.start и будущий dblclick-обработчик, SLT-61 Точка сверки 2).
+   */
+  editingTextId: string | null;
 }
 
 interface EditorActions {
@@ -39,6 +49,8 @@ interface EditorActions {
   setViewport: (viewport: Viewport) => void;
   setSelectedElementIds: (ids: string[]) => void;
   setCanEdit: (canEdit: boolean) => void;
+  setEditingTextId: (id: string | null) => void;
+  clearEditingTextId: () => void;
 }
 
 export type EditorStore = EditorState & EditorActions;
@@ -52,12 +64,18 @@ export const useEditorStore = create<EditorStore>()(
     draft: null,
     viewport: INITIAL_VIEWPORT,
     canEdit: false,
+    editingTextId: null,
 
     setTool: (tool) =>
       set((state) => {
         state.selectedTool = tool;
         // Смена инструмента отменяет незакоммиченный черновик.
         state.draft = null;
+        // Симметрично draft: смена инструмента — тот же защитный сброс для незакоммиченного
+        // ре-редактирования text (dblclick), иначе оверлей мог бы остаться открытым поверх уже
+        // переключённого на другой инструмент холста (обычно это перехватывает blur textarea,
+        // но смена инструмента не обязана зависеть от порядка DOM-событий).
+        state.editingTextId = null;
         // Выделение — концепт select-режима. Уходя на инструмент рисования,
         // снимаем его, иначе рамка Transformer «зависнет» поверх рисования.
         if (tool !== 'select') state.selectedElementIds = [];
@@ -81,6 +99,16 @@ export const useEditorStore = create<EditorStore>()(
     setCanEdit: (canEdit) =>
       set((state) => {
         state.canEdit = canEdit;
+      }),
+
+    setEditingTextId: (id) =>
+      set((state) => {
+        state.editingTextId = id;
+      }),
+
+    clearEditingTextId: () =>
+      set((state) => {
+        state.editingTextId = null;
       }),
   })),
 );

@@ -1,6 +1,7 @@
 import type { KonvaEventObject } from 'konva/lib/Node';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useDocumentStore } from '@/entities/canvas-element';
 import { isEditableTarget } from '@/shared/lib/dom';
 import type { Point } from '@/shared/lib/viewport';
 
@@ -27,6 +28,8 @@ export interface CanvasInteractionHandlers {
   // Всплывают со Stage при нативном drag узла-фигуры (Stage сам не draggable).
   onDragStart: (e: KonvaEventObject<DragEvent>) => void;
   onDragEnd: (e: KonvaEventObject<DragEvent>) => void;
+  /** Ре-редактирование существующего text-элемента (SLT-61, Р6) — открывает оверлей на нём. */
+  onDblClick: (e: KonvaEventObject<MouseEvent>) => void;
 }
 
 export interface CanvasInteraction {
@@ -63,6 +66,7 @@ export function useCanvasInteraction(): CanvasInteraction {
   const { selectAt, findAt } = useSelection();
   const setViewport = useEditorStore((state) => state.setViewport);
   const selectedTool = useEditorStore((state) => state.selectedTool);
+  const setEditingTextId = useEditorStore((state) => state.setEditingTextId);
 
   const [isSpacePressed, setIsSpacePressed] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
@@ -198,6 +202,31 @@ export function useCanvasInteraction(): CanvasInteraction {
   const onDragStart = useCallback((): void => setIsDraggingShape(true), []);
   const onDragEnd = useCallback((): void => setIsDraggingShape(false), []);
 
+  // Ре-редактирование text по dblclick (SLT-61, Р6). findAt — тот же hit-test, что у selectAt
+  // (единый источник «что под курсором»), просто без побочного эффекта выделения.
+  const onDblClick = useCallback(
+    (e: KonvaEventObject<MouseEvent>): void => {
+      const pointer = e.target.getStage()?.getPointerPosition();
+      if (!pointer) return;
+
+      const { canEdit, draft, editingTextId } = useEditorStore.getState();
+      if (!canEdit) return;
+      // Оверлей уже открыт (создание ИЛИ ре-редактирование другого текста) — второй не открываем,
+      // тот же guard, что и в useDrawing.start.
+      if ((draft && draft.type === 'text') || editingTextId !== null) return;
+
+      const id = findAt(pointer);
+      if (!id) return;
+
+      const { elements } = useDocumentStore.getState();
+      const element = elements[id];
+      if (!element || element.type !== 'text') return;
+
+      setEditingTextId(id);
+    },
+    [findAt, setEditingTextId],
+  );
+
   const cursor: CanvasCursor = isPanning
     ? 'grabbing'
     : isDraggingShape
@@ -225,6 +254,7 @@ export function useCanvasInteraction(): CanvasInteraction {
       onMouseLeave,
       onDragStart,
       onDragEnd,
+      onDblClick,
     },
   };
 }
