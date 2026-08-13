@@ -1,14 +1,17 @@
+import { rotatePoint } from '@/shared/lib/angle';
 import type { Point } from '@/shared/lib/viewport';
 
-import type { CanvasElement } from './types';
+import type { CanvasElement, TextElement } from './types';
 
 /**
  * Пивот поворота элемента (SLT-63) — та же точка, в которой Konva держит нативный rotation-якорь
  * (см. точку сверки SLT-63 и ElementShape.nodePositionToModel): rect/line/freedraw/arrow/text
  * поворачиваются вокруг угла рамки (x, y), ellipse — вокруг центра. Дублирует различие по типу
- * из ElementShape/resize.ts намеренно: hitTest в entities не может импортировать из widgets.
+ * из ElementShape/resize.ts намеренно (hitTest в entities не может импортировать из widgets),
+ * но экспортируется для getElementBounds (bounds.ts, тот же слой entities) — там дублировать
+ * незачем, оба потребителя сидят в одной model-папке.
  */
-function getRotationPivot(element: CanvasElement): Point {
+export function getRotationPivot(element: CanvasElement): Point {
   if (element.type === 'ellipse') {
     return { x: element.x + element.data.width / 2, y: element.y + element.data.height / 2 };
   }
@@ -17,18 +20,12 @@ function getRotationPivot(element: CanvasElement): Point {
 
 /**
  * Переводит мировую точку в НЕВРАЩЁННУЮ локальную систему элемента — поворотом на -angle вокруг
- * его пивота. Существующие isInsideRect/isInsideEllipse/isNearPolyline считают геометрию именно
- * в этой системе (без учёта angle), так что после поворота точки их код не меняется.
+ * его пивота (rotatePoint крутит на +angle, тут обратное преобразование). Существующие
+ * isInsideRect/isInsideEllipse/isNearPolyline считают геометрию именно в этой системе (без учёта
+ * angle), так что после поворота точки их код не меняется.
  */
 function unrotatePoint(point: Point, pivot: Point, angle: number): Point {
-  const cos = Math.cos(-angle);
-  const sin = Math.sin(-angle);
-  const dx = point.x - pivot.x;
-  const dy = point.y - pivot.y;
-  return {
-    x: pivot.x + dx * cos - dy * sin,
-    y: pivot.y + dx * sin + dy * cos,
-  };
+  return rotatePoint(point, pivot, -angle);
 }
 
 /**
@@ -54,6 +51,21 @@ function unrotatePoint(point: Point, pivot: Point, angle: number): Point {
  */
 const TEXT_HIT_LINE_HEIGHT_FACTOR = 1.2;
 const TEXT_HIT_CHAR_WIDTH_FACTOR = 0.6;
+
+/**
+ * Приближённый локальный (невращённый, от x/y элемента) размер text-фигуры — единственное место
+ * с этими коэффициентами (SLT-64: переиспользует getElementBounds в bounds.ts, чтобы bbox текста
+ * не считался дважды по двум разным формулам).
+ */
+export function getTextLocalBounds(element: TextElement): { width: number; height: number } {
+  const { text, fontSize } = element.data;
+  const lines = text.split('\n');
+  const longestLine = lines.reduce((max, line) => Math.max(max, line.length), 0);
+  return {
+    width: longestLine * fontSize * TEXT_HIT_CHAR_WIDTH_FACTOR,
+    height: lines.length * fontSize * TEXT_HIT_LINE_HEIGHT_FACTOR,
+  };
+}
 
 export function hitTestElement(element: CanvasElement, point: Point, tolerance = 0): boolean {
   // Ниже все проверки считают в НЕВРАЩЁННОЙ системе — для повёрнутой фигуры (angle !== 0)
@@ -90,11 +102,7 @@ export function hitTestElement(element: CanvasElement, point: Point, tolerance =
     case 'text': {
       // Прямоугольная область, НЕ polyline: text — это content-блок от x/y (левый верхний угол),
       // не ломаная. Пустой текст в hitTest не встречается (isCommittable отсекает коммит пустого).
-      const { text, fontSize } = element.data;
-      const lines = text.split('\n');
-      const longestLine = lines.reduce((max, line) => Math.max(max, line.length), 0);
-      const width = longestLine * fontSize * TEXT_HIT_CHAR_WIDTH_FACTOR;
-      const height = lines.length * fontSize * TEXT_HIT_LINE_HEIGHT_FACTOR;
+      const { width, height } = getTextLocalBounds(element);
       return isInsideRect(localPoint, element.x, element.y, width, height, tolerance);
     }
 
