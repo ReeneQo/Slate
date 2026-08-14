@@ -5,6 +5,7 @@ import { Layer, Rect, Stage, Transformer } from 'react-konva';
 import { useShallow } from 'zustand/react/shallow';
 
 import { useDocumentStore } from '@/entities/canvas-element';
+import { ExportButton } from '@/features/canvas-export';
 import { Toolbar } from '@/features/toolbar';
 
 import { useCanvasHotkeys } from '../lib/useCanvasHotkeys';
@@ -28,10 +29,21 @@ import { TextEditor } from './TextEditor';
  *    фигуры или смене порядка, а не при правке одной фигуры;
  *  - сам элемент тащит уже ShapeRenderer по своему id.
  */
-export function CanvasStage(): ReactElement {
+interface CanvasStageProps {
+  /** id доски (из роута, через BoardCanvas) — фоллбэк имени файла экспорта (SLT-66). */
+  boardId: string;
+  /** Название доски (BoardCanvas → useBoardTitle) — приоритетная часть имени файла экспорта. */
+  boardTitle: string | undefined;
+}
+
+export function CanvasStage({ boardId, boardTitle }: CanvasStageProps): ReactElement {
   const { width, height } = useViewportSize();
 
   const transformerRef = useRef<Konva.Transformer | null>(null);
+  // Основной Layer (SLT-66, экспорт PNG): снимаем toDataURL именно с него, не со Stage — так
+  // RemoteCursorsLayer (отдельный Layer, listening=false не влияет на видимость при рендере)
+  // физически не участвует в вызове.
+  const mainLayerRef = useRef<Konva.Layer | null>(null);
   // Реестр живых Konva-узлов по id. Ref (не state): наполняется из ref-колбэков
   // в фазе коммита и не должен триггерить рендер.
   const nodeMap = useRef(new Map<string, Node>());
@@ -118,7 +130,7 @@ export function CanvasStage(): ReactElement {
           y={viewport.y}
           {...handlers}
         >
-          <Layer>
+          <Layer ref={mainLayerRef}>
             {elementIds
               // Элемент, который ПРЯМО СЕЙЧАС правит текстовый оверлей (SLT-61), не рисуем здесь —
               // иначе под оверлеем был бы виден committed Konva.Text со СТАРЫМ текстом, пока
@@ -182,6 +194,14 @@ export function CanvasStage(): ReactElement {
       {/* Роль-гейт (SLT-43): viewer не рисует — тулбар инструментов рисования скрыт целиком,
           а не задизейблен по кнопке (единый флаг, не размазанный if по элементам). */}
       {canEdit && <Toolbar selectedTool={selectedTool} onSelectTool={setTool} />}
+      {/* Экспорт (SLT-66) доступен ВСЕМ ролям, не гейтится canEdit — не мутирует документ. */}
+      <ExportButton
+        boardId={boardId}
+        boardTitle={boardTitle}
+        viewport={viewport}
+        layerRef={mainLayerRef}
+        transformerRef={transformerRef}
+      />
     </>
   );
 }

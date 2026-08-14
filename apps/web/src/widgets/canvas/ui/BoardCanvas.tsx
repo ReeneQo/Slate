@@ -1,6 +1,6 @@
 import { type ReactElement, useEffect, useState } from 'react';
 
-import { useBoardRole } from '@/features/board-list';
+import { useBoardRole, useBoardTitle } from '@/features/board-list';
 import { ShareDialog } from '@/features/board-sharing';
 import { PresenceBar, useRealtimePresence } from '@/features/realtime-presence';
 
@@ -39,6 +39,7 @@ export function BoardCanvas({ boardId }: BoardCanvasProps): ReactElement {
   useRealtimePresence(boardId);
 
   const role = useBoardRole(boardId);
+  const boardTitle = useBoardTitle(boardId);
   const canEdit = deriveCanEdit(role);
   const setCanEdit = useEditorStore((state) => state.setCanEdit);
   useEffect(() => setCanEdit(canEdit), [canEdit, setCanEdit]);
@@ -78,7 +79,7 @@ export function BoardCanvas({ boardId }: BoardCanvasProps): ReactElement {
         </button>
       )}
       <PresenceBar />
-      <CanvasStage />
+      <CanvasStage boardId={boardId} boardTitle={boardTitle} />
       {role && (
         <ShareDialog
           boardId={boardId}
