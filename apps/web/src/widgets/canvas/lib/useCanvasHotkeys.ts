@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 
+import type { ToolType } from '@/entities/canvas-element';
 import { useDocumentStore, useHistoryStore } from '@/entities/canvas-element';
+import { TOOLS } from '@/features/toolbar';
 import { isEditableTarget } from '@/shared/lib/dom';
 
 import { useEditorStore } from '../model/editor.store';
@@ -20,15 +22,33 @@ export function matchesDelete(event: KeyboardEvent): boolean {
   return (event.key === 'Delete' || event.key === 'Backspace') && !event.metaKey && !event.ctrlKey;
 }
 
-/** Undo — кроссплатформенно: Cmd (Mac) или Ctrl (Win/Linux) + Z, БЕЗ Shift. */
+/**
+ * Undo — кроссплатформенно: Cmd (Mac) или Ctrl (Win/Linux) + Z, БЕЗ Shift.
+ * Матчим по `event.code` (физическая клавиша), НЕ `event.key` (SLT-67) — так комбо работает
+ * независимо от раскладки (кириллица и т.д.), не только на латинице.
+ */
 export function matchesUndo(event: KeyboardEvent): boolean {
-  return (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z' && !event.shiftKey;
+  return (event.metaKey || event.ctrlKey) && event.code === 'KeyZ' && !event.shiftKey;
 }
 
-/** Redo — Cmd/Ctrl+Shift+Z (кроссплатформенно) ИЛИ Ctrl+Y (Windows-конвенция). */
+/** Redo — Cmd/Ctrl+Shift+Z (кроссплатформенно) ИЛИ Ctrl+Y (Windows-конвенция). См. matchesUndo про `code`. */
 export function matchesRedo(event: KeyboardEvent): boolean {
-  const key = event.key.toLowerCase();
-  return (event.metaKey || event.ctrlKey) && ((event.shiftKey && key === 'z') || key === 'y');
+  return (
+    (event.metaKey || event.ctrlKey) &&
+    ((event.shiftKey && event.code === 'KeyZ') || event.code === 'KeyY')
+  );
+}
+
+/**
+ * Хоткей выбора инструмента (SLT-67): голая физическая клавиша из единой раскладки
+ * `TOOLS` (`@/features/toolbar`) — БЕЗ модификаторов, иначе перехватит системные комбо
+ * (Cmd/Ctrl+R — reload, будущий Ctrl+V — paste и т.п.). Возвращает `null`, если клавиша
+ * не из раскладки инструментов или зажат модификатор — как и матчеры выше, чистый и
+ * тестируемый без DOM.
+ */
+export function matchesToolHotkey(event: KeyboardEvent): ToolType | null {
+  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return null;
+  return TOOLS.find((descriptor) => descriptor.code === event.code)?.tool ?? null;
 }
 
 const rules: HotkeyRule[] = [
@@ -65,6 +85,14 @@ const rules: HotkeyRule[] = [
       useHistoryStore.getState().redo();
     },
   },
+  // Правила выбора инструмента (SLT-67) — генерируются из TOOLS, а не переписаны вручную по
+  // одному на клавишу: раскладка одна (`@/features/toolbar`), правила лишь проецируют её.
+  ...TOOLS.map(
+    ({ tool }): HotkeyRule => ({
+      match: (event) => matchesToolHotkey(event) === tool,
+      run: () => useEditorStore.getState().setTool(tool),
+    }),
+  ),
 ];
 
 /**

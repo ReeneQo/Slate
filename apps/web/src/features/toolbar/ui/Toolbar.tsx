@@ -2,22 +2,7 @@ import type { ReactElement } from 'react';
 
 import type { ToolType } from '@/entities/canvas-element';
 
-interface ToolDescriptor {
-  tool: ToolType;
-  label: string;
-  /** Подсказка/будущий хоткей. */
-  hint: string;
-}
-
-const TOOLS: readonly ToolDescriptor[] = [
-  { tool: 'select', label: 'Select', hint: 'V' },
-  { tool: 'rect', label: 'Rectangle', hint: 'R' },
-  { tool: 'ellipse', label: 'Ellipse', hint: 'O' },
-  { tool: 'line', label: 'Line', hint: 'L' },
-  { tool: 'freedraw', label: 'Pencil', hint: 'P' },
-  { tool: 'arrow', label: 'Arrow', hint: 'A' },
-  { tool: 'text', label: 'Text', hint: 'T' },
-];
+import { hintFromCode, TOOLS } from '../model/tools';
 
 interface ToolbarProps {
   selectedTool: ToolType;
@@ -35,8 +20,9 @@ export function Toolbar({ selectedTool, onSelectTool }: ToolbarProps): ReactElem
       aria-label="Drawing tools"
       className="fixed left-1/2 top-4 z-10 flex -translate-x-1/2 gap-1 rounded-xl border border-black/10 bg-white/90 p-1 shadow-lg backdrop-blur"
     >
-      {TOOLS.map(({ tool, label, hint }) => {
+      {TOOLS.map(({ tool, label, code }) => {
         const isActive = selectedTool === tool;
+        const hint = hintFromCode(code);
         return (
           <button
             key={tool}

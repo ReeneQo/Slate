@@ -1,21 +1,26 @@
 import { describe, expect, it } from 'vitest';
 
-import { matchesDelete, matchesRedo, matchesUndo } from './useCanvasHotkeys';
+import { matchesDelete, matchesRedo, matchesToolHotkey, matchesUndo } from './useCanvasHotkeys';
 
 /**
  * Минимальный KeyboardEvent для матчеров — тесты запускаются в node-окружении (без jsdom), а
- * матчеры читают только key/ctrlKey/metaKey/shiftKey, поэтому реальный конструктор не нужен.
+ * матчеры читают только key/code/ctrlKey/metaKey/altKey/shiftKey, поэтому реальный конструктор
+ * не нужен.
  */
 function keyEvent(init: {
-  key: string;
+  key?: string;
+  code?: string;
   ctrlKey?: boolean;
   metaKey?: boolean;
+  altKey?: boolean;
   shiftKey?: boolean;
 }): KeyboardEvent {
   return {
-    key: init.key,
+    key: init.key ?? '',
+    code: init.code ?? '',
     ctrlKey: init.ctrlKey ?? false,
     metaKey: init.metaKey ?? false,
+    altKey: init.altKey ?? false,
     shiftKey: init.shiftKey ?? false,
   } as KeyboardEvent;
 }
@@ -37,39 +42,66 @@ describe('matchesDelete', () => {
 });
 
 describe('matchesUndo', () => {
-  it('матчит Ctrl+Z и Cmd+Z', () => {
-    expect(matchesUndo(keyEvent({ key: 'z', ctrlKey: true }))).toBe(true);
-    expect(matchesUndo(keyEvent({ key: 'z', metaKey: true }))).toBe(true);
+  it('матчит Ctrl+Z и Cmd+Z (по e.code — раскладко-независимо)', () => {
+    expect(matchesUndo(keyEvent({ code: 'KeyZ', ctrlKey: true }))).toBe(true);
+    expect(matchesUndo(keyEvent({ code: 'KeyZ', metaKey: true }))).toBe(true);
   });
 
-  it('матчит верхний регистр Z (Shift-раскладка без shiftKey отдельно не бывает, но key может прийти "Z")', () => {
-    expect(matchesUndo(keyEvent({ key: 'Z', ctrlKey: true }))).toBe(true);
+  it('матчит независимо от e.key (не-латинская раскладка шлёт другой key на той же физической клавише)', () => {
+    expect(matchesUndo(keyEvent({ code: 'KeyZ', key: 'я', ctrlKey: true }))).toBe(true);
   });
 
   it('Ctrl+Shift+Z НЕ матчит undo (это redo)', () => {
-    expect(matchesUndo(keyEvent({ key: 'z', ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(matchesUndo(keyEvent({ code: 'KeyZ', ctrlKey: true, shiftKey: true }))).toBe(false);
   });
 
   it('голая Z без модификатора НЕ матчит', () => {
-    expect(matchesUndo(keyEvent({ key: 'z' }))).toBe(false);
+    expect(matchesUndo(keyEvent({ code: 'KeyZ' }))).toBe(false);
   });
 });
 
 describe('matchesRedo', () => {
   it('матчит Ctrl+Shift+Z и Cmd+Shift+Z', () => {
-    expect(matchesRedo(keyEvent({ key: 'z', ctrlKey: true, shiftKey: true }))).toBe(true);
-    expect(matchesRedo(keyEvent({ key: 'z', metaKey: true, shiftKey: true }))).toBe(true);
+    expect(matchesRedo(keyEvent({ code: 'KeyZ', ctrlKey: true, shiftKey: true }))).toBe(true);
+    expect(matchesRedo(keyEvent({ code: 'KeyZ', metaKey: true, shiftKey: true }))).toBe(true);
   });
 
   it('матчит Ctrl+Y (Windows-конвенция)', () => {
-    expect(matchesRedo(keyEvent({ key: 'y', ctrlKey: true }))).toBe(true);
+    expect(matchesRedo(keyEvent({ code: 'KeyY', ctrlKey: true }))).toBe(true);
   });
 
   it('НЕ матчит голый Shift+Z без Ctrl/Cmd', () => {
-    expect(matchesRedo(keyEvent({ key: 'z', shiftKey: true }))).toBe(false);
+    expect(matchesRedo(keyEvent({ code: 'KeyZ', shiftKey: true }))).toBe(false);
   });
 
   it('НЕ матчит Ctrl+Z без Shift (это undo)', () => {
-    expect(matchesRedo(keyEvent({ key: 'z', ctrlKey: true }))).toBe(false);
+    expect(matchesRedo(keyEvent({ code: 'KeyZ', ctrlKey: true }))).toBe(false);
+  });
+});
+
+describe('matchesToolHotkey', () => {
+  it('каждая голая буква из раскладки матчит свой инструмент', () => {
+    expect(matchesToolHotkey(keyEvent({ code: 'KeyV' }))).toBe('select');
+    expect(matchesToolHotkey(keyEvent({ code: 'KeyR' }))).toBe('rect');
+    expect(matchesToolHotkey(keyEvent({ code: 'KeyO' }))).toBe('ellipse');
+    expect(matchesToolHotkey(keyEvent({ code: 'KeyL' }))).toBe('line');
+    expect(matchesToolHotkey(keyEvent({ code: 'KeyP' }))).toBe('freedraw');
+    expect(matchesToolHotkey(keyEvent({ code: 'KeyA' }))).toBe('arrow');
+    expect(matchesToolHotkey(keyEvent({ code: 'KeyT' }))).toBe('text');
+  });
+
+  it('НЕ матчит ни с одним модификатором (критично для Cmd/Ctrl+R reload)', () => {
+    expect(matchesToolHotkey(keyEvent({ code: 'KeyR', ctrlKey: true }))).toBeNull();
+    expect(matchesToolHotkey(keyEvent({ code: 'KeyR', metaKey: true }))).toBeNull();
+    expect(matchesToolHotkey(keyEvent({ code: 'KeyR', shiftKey: true }))).toBeNull();
+    expect(matchesToolHotkey(keyEvent({ code: 'KeyR', altKey: true }))).toBeNull();
+  });
+
+  it('матчит по e.code независимо от e.key (не-латинская раскладка)', () => {
+    expect(matchesToolHotkey(keyEvent({ code: 'KeyR', key: 'к' }))).toBe('rect');
+  });
+
+  it('клавиша вне раскладки инструментов НЕ матчит', () => {
+    expect(matchesToolHotkey(keyEvent({ code: 'KeyZ' }))).toBeNull();
   });
 });
