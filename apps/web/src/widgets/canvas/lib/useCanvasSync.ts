@@ -11,6 +11,12 @@ import {
 } from '@/entities/canvas-element';
 import {
   type AppSocket,
+  type ElementBatchBroadcastPayload,
+  type ElementBatchDeleteAckResult,
+  type ElementBatchDeletedBroadcastPayload,
+  type ElementBatchDeletePayload,
+  type ElementBatchUpdateAckResult,
+  type ElementBatchUpdatePayload,
   type ElementBroadcastPayload,
   type ElementCreateAckResult,
   type ElementCreatePayload,
@@ -147,15 +153,27 @@ export function useCanvasSync(boardId: string): CanvasSyncState {
     const handleDeleted = (payload: ElementDeletedBroadcastPayload): void => {
       useDocumentStore.getState().applyRemoteDelete(payload.id);
     };
+    // Батч-broadcast (SLT-68) — партнёр применяет пачку ОДНИМ проходом/ОДНИМ set() (не N вызовов
+    // applyRemoteUpdate/Delete в цикле — это дало бы N ререндеров вместо одного).
+    const handleBatchUpdated = (payload: ElementBatchBroadcastPayload): void => {
+      useDocumentStore.getState().applyRemoteBatchUpdate(payload.elements);
+    };
+    const handleBatchDeleted = (payload: ElementBatchDeletedBroadcastPayload): void => {
+      useDocumentStore.getState().applyRemoteBatchDelete(payload.deletions.map((d) => d.id));
+    };
 
     socket.on('element_created', handleCreated);
     socket.on('element_updated', handleUpdated);
     socket.on('element_deleted', handleDeleted);
+    socket.on('element_batch_updated', handleBatchUpdated);
+    socket.on('element_batch_deleted', handleBatchDeleted);
 
     return () => {
       socket.off('element_created', handleCreated);
       socket.off('element_updated', handleUpdated);
       socket.off('element_deleted', handleDeleted);
+      socket.off('element_batch_updated', handleBatchUpdated);
+      socket.off('element_batch_deleted', handleBatchDeleted);
     };
   }, [boardId]);
 
@@ -236,6 +254,22 @@ function emitElementDelete(
   payload: ElementDeletePayload,
 ): Promise<ElementDeleteAckResult> {
   return new Promise((resolve) => socket.emit('element_delete', payload, resolve));
+}
+
+/** WS-emit батч-обновления (SLT-68) — та же форма, что у одиночных emit* выше. */
+function emitElementBatchUpdate(
+  socket: AppSocket,
+  payload: ElementBatchUpdatePayload,
+): Promise<ElementBatchUpdateAckResult> {
+  return new Promise((resolve) => socket.emit('element_batch_update', payload, resolve));
+}
+
+/** WS-emit батч-удаления (SLT-68). */
+function emitElementBatchDelete(
+  socket: AppSocket,
+  payload: ElementBatchDeletePayload,
+): Promise<ElementBatchDeleteAckResult> {
+  return new Promise((resolve) => socket.emit('element_batch_delete', payload, resolve));
 }
 
 /**
@@ -339,10 +373,60 @@ export async function sendMutation(
       }
       break;
     }
+    case 'batch_update': {
+      // Батч group-drag/multi-resize (SLT-68) — ОДИН element_batch_update на весь жест, а не N
+      // element_update. version на КАЖДЫЙ читается из стора СЕЙЧАС (см. 'update' выше) — тем же
+      // приёмом, той же единственной точкой правды.
+      const { elements } = useDocumentStore.getState();
+      const items = change.updates.map(({ id, patch }) => ({
+        id,
+        version: elements[id]?.version ?? 0,
+        changes: patch,
+      }));
+      const result = await emitElementBatchUpdate(socket, { boardId, items });
+
+      if (result.ok) {
+        for (const applied of result.applied) {
+          syncElementVersion(applied.id, applied.version);
+        }
+        for (const conflict of result.conflicts) {
+          const kind = classifyRejectReason(conflict.kind);
+          if (errorKind === null || errorKindPriority(kind) > errorKindPriority(errorKind)) {
+            errorKind = kind;
+          }
+          if (conflict.kind === 'version_conflict') applyRemoteUpdate(conflict.element);
+        }
+      } else {
+        errorKind = classifyRejectReason(result.reason);
+      }
+      break;
+    }
     case 'delete': {
-      // Одиночные операции (batch — SLT-22): удаление N элементов = N параллельных
-      // element_delete. version на КАЖДЫЙ уже снята в самом change (deleteElements успел убрать
-      // элемент из стора раньше, чем сюда добралась асинхронная отправка).
+      // >1 — реальная пачка (multi-select delete, SLT-68): ОДИН element_batch_delete, не N
+      // параллельных element_delete. version на КАЖДЫЙ уже снята в самом change (deleteElements
+      // успел убрать элемент из стора раньше, чем сюда добралась асинхронная отправка).
+      if (change.deletions.length > 1) {
+        const result = await emitElementBatchDelete(socket, {
+          boardId,
+          items: change.deletions.map(({ id, version }) => ({ id, version })),
+        });
+
+        if (result.ok) {
+          for (const conflict of result.conflicts) {
+            const kind = classifyRejectReason(conflict.kind);
+            if (errorKind === null || errorKindPriority(kind) > errorKindPriority(errorKind)) {
+              errorKind = kind;
+            }
+            if (conflict.kind === 'version_conflict') applyRemoteUpdate(conflict.element);
+          }
+        } else {
+          errorKind = classifyRejectReason(result.reason);
+        }
+        break;
+      }
+
+      // Одиночная операция (0 или 1 элемент, Р6: single остаётся аддитивно — НЕ переписан на
+      // «батч из одного») — старый путь, без изменений.
       const results = await Promise.all(
         change.deletions.map(({ id, version }) =>
           emitElementDelete(socket, { boardId, id, version }),

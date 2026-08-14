@@ -5,6 +5,16 @@
  */
 export type {
   AppSocket,
+  ElementBatchBroadcastPayload,
+  ElementBatchConflictEntry,
+  ElementBatchDeleteAckResult,
+  ElementBatchDeletedBroadcastPayload,
+  ElementBatchDeleteItem,
+  ElementBatchDeletePayload,
+  ElementBatchItemRejectReason,
+  ElementBatchUpdateAckResult,
+  ElementBatchUpdateItem,
+  ElementBatchUpdatePayload,
   ElementBroadcastPayload,
   ElementCreateAckResult,
   ElementCreatePayload,
@@ -16,6 +26,7 @@ export type {
   ElementUpdatePayload,
   PresenceUser,
 } from './lib/realtime.contracts';
+export { MAX_BATCH_SIZE } from './lib/realtime.contracts';
 export type { RemoteCursor } from './model/realtime.store';
 export { useRealtimeStore } from './model/realtime.store';
 export { useRealtimePresence } from './model/useRealtimePresence';

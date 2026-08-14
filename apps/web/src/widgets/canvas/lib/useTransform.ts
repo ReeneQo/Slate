@@ -6,7 +6,9 @@ import { useCallback } from 'react';
 
 import {
   applyResizeTransform,
+  beginChangeBatch,
   beginTransaction,
+  endChangeBatch,
   endTransaction,
   useDocumentStore,
 } from '@/entities/canvas-element';
@@ -89,6 +91,10 @@ export function useTransform(
     // (SLT-65, Р2): begin/end оборачивают весь forEach безусловно, даже для одного элемента —
     // транзакция из одной операции ничем не хуже соло-записи, а код проще без ветвления по count.
     beginTransaction();
+    // WS-батч (SLT-68) — то же окно по факту вызова, отдельный механизм от истории (см. докстринг
+    // beginChangeBatch): multi-resize/rotate уедет ОДНИМ element_batch_update, а не N; для
+    // одиночного элемента endChangeBatch сам упадёт обратно на одиночный element_update (Р6).
+    beginChangeBatch();
     transformer.nodes().forEach((node) => {
       const id = findNodeId(nodeMap.current, node);
       const element = id ? elements[id] : undefined;
@@ -120,6 +126,7 @@ export function useTransform(
 
       updateElement(id, { ...resizePatch, angle });
     });
+    endChangeBatch();
     endTransaction();
   }, [transformerRef, nodeMap]);
 

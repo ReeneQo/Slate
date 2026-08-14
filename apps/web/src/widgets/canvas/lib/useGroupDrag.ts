@@ -1,7 +1,13 @@
 import type { KonvaEventObject, Node } from 'konva/lib/Node';
 import { type RefObject, useCallback, useRef } from 'react';
 
-import { beginTransaction, endTransaction, useDocumentStore } from '@/entities/canvas-element';
+import {
+  beginChangeBatch,
+  beginTransaction,
+  endChangeBatch,
+  endTransaction,
+  useDocumentStore,
+} from '@/entities/canvas-element';
 
 import { useEditorStore } from '../model/editor.store';
 import { computeGroupDragPositions, type GroupDragSibling } from './groupDrag';
@@ -74,6 +80,10 @@ export function useGroupDrag(nodeMap: RefObject<Map<string, Node>>): GroupDragCo
       // раньше) и коммит сиблингов ниже (bubble-фаза, срабатывает позже) — оба попадают в одну
       // транзакцию, один Ctrl+Z отменяет группу целиком.
       beginTransaction();
+      // WS-батч (SLT-68) — ОТДЕЛЬНОЕ окно от истории (см. докстринг beginChangeBatch), открытое в
+      // той же точке и по той же причине: оно ТОЖЕ перекрывает и коммит ведущего узла, и коммит
+      // сиблингов — вся группа уедет ОДНИМ element_batch_update, а не N element_update.
+      beginChangeBatch();
     },
     [nodeMap],
   );
@@ -109,6 +119,7 @@ export function useGroupDrag(nodeMap: RefObject<Map<string, Node>>): GroupDragCo
     for (const position of computeGroupDragPositions(active.siblingsModel, dx, dy)) {
       updateElement(position.id, { x: position.x, y: position.y });
     }
+    endChangeBatch();
     endTransaction();
   }, []);
 

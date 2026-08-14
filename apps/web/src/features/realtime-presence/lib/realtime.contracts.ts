@@ -131,6 +131,72 @@ export interface ElementDeletedBroadcastPayload {
   userId: string;
 }
 
+/**
+ * Батч-мутации (SLT-68) — гомогенный транспорт (update/delete раздельно, без batch_create) поверх
+ * ТОЙ ЖЕ версионной семантики, что у одиночных мутаций выше. Поэлементный успех: ack несёт
+ * `{applied, conflicts}`, а не единый `ok`, — конфликт version у одного элемента не отменяет
+ * применение остальных (см. серверный докстринг, `apps/api/.../realtime.types.ts`). Зеркалировано
+ * ВРУЧНУЮ (см. докстринг файла) — при правке серверных батч-типов поправить и здесь.
+ */
+
+/** Верхняя граница числа элементов в одной батч-мутации — то же значение, что на сервере (Р7). */
+export const MAX_BATCH_SIZE = 500;
+
+export interface ElementBatchUpdateItem {
+  id: string;
+  version: number;
+  changes: PatchElementInput;
+}
+
+export interface ElementBatchUpdatePayload {
+  boardId: string;
+  items: ElementBatchUpdateItem[];
+}
+
+export interface ElementBatchDeleteItem {
+  id: string;
+  version: number;
+}
+
+export interface ElementBatchDeletePayload {
+  boardId: string;
+  items: ElementBatchDeleteItem[];
+}
+
+/** Причина отказа ОДНОГО элемента батча — подмножество `ElementMutationRejectReason` без
+ * `access_denied` (отказ всего батча) и `conflict` (create-only, которого в батче нет). */
+export type ElementBatchItemRejectReason =
+  | 'not_found'
+  | 'forbidden'
+  | 'invalid_payload'
+  | 'version_conflict';
+
+/** Запись в `conflicts`: `element` есть ТОЛЬКО у `version_conflict` (нужен клиенту для LWW). */
+export type ElementBatchConflictEntry =
+  | { id: string; kind: 'version_conflict'; element: CanvasElement }
+  | { id: string; kind: Exclude<ElementBatchItemRejectReason, 'version_conflict'> };
+
+/** Ack `element_batch_update`. Батч-уровневый reject — ДО разбора по элементам. */
+export type ElementBatchUpdateAckResult =
+  | { ok: true; applied: CanvasElement[]; conflicts: ElementBatchConflictEntry[] }
+  | { ok: false; reason: 'access_denied' | 'invalid_payload' };
+
+/** Ack `element_batch_delete`. Успех несёт id/version, не элемент — симметрично одиночному delete. */
+export type ElementBatchDeleteAckResult =
+  | { ok: true; applied: { id: string; version: number }[]; conflicts: ElementBatchConflictEntry[] }
+  | { ok: false; reason: 'access_denied' | 'invalid_payload' };
+
+/** Batch-broadcast: ОДИН на весь батч, только успешно применённые элементы (финальное состояние). */
+export interface ElementBatchBroadcastPayload {
+  elements: CanvasElement[];
+  userId: string;
+}
+
+export interface ElementBatchDeletedBroadcastPayload {
+  deletions: { id: string; version: number }[];
+  userId: string;
+}
+
 export interface ServerToClientEvents {
   presence_snapshot: (payload: PresenceSnapshotPayload) => void;
   presence_join: (payload: PresenceJoinPayload) => void;
@@ -141,6 +207,9 @@ export interface ServerToClientEvents {
   element_created: (payload: ElementBroadcastPayload) => void;
   element_updated: (payload: ElementBroadcastPayload) => void;
   element_deleted: (payload: ElementDeletedBroadcastPayload) => void;
+  /** Батч-broadcast (SLT-68) — один на весь батч, только применённые элементы. */
+  element_batch_updated: (payload: ElementBatchBroadcastPayload) => void;
+  element_batch_deleted: (payload: ElementBatchDeletedBroadcastPayload) => void;
 }
 
 export interface ClientToServerEvents {
@@ -163,6 +232,16 @@ export interface ClientToServerEvents {
   element_delete: (
     payload: ElementDeletePayload,
     ack: (result: ElementDeleteAckResult) => void,
+  ) => void;
+  /** Батч-обновление (SLT-68) — поэлементный успех, см. докстринг у батч-типов выше. */
+  element_batch_update: (
+    payload: ElementBatchUpdatePayload,
+    ack: (result: ElementBatchUpdateAckResult) => void,
+  ) => void;
+  /** Батч-удаление (SLT-68). */
+  element_batch_delete: (
+    payload: ElementBatchDeletePayload,
+    ack: (result: ElementBatchDeleteAckResult) => void,
   ) => void;
 }
 
