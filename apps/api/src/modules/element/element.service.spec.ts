@@ -841,4 +841,106 @@ describe('ElementService', () => {
       expect(softDeleteAccessibleVersioned).not.toHaveBeenCalled();
     });
   });
+
+  describe('batchPatchVersioned (WS batch, SLT-68)', () => {
+    const ELEMENT_ID_2 = '019fa5b1-0000-7000-8000-000000000003';
+
+    it('поэлементный успех: конфликт version у ОДНОГО элемента не откатывает остальные', async () => {
+      const { elementService, patchAccessibleVersioned, findAccessible } = createDependencies();
+      // ELEMENT_ID — conditional update проходит; ELEMENT_ID_2 — P2025 (устаревшая version).
+      patchAccessibleVersioned.mockImplementation((id) =>
+        Promise.resolve(id === ELEMENT_ID ? createElementEntity({ x: 99, version: 2 }) : null),
+      );
+      findAccessible.mockResolvedValue(createElementEntity({ id: ELEMENT_ID_2, version: 7 }));
+
+      const result = await elementService.batchPatchVersioned(USER_ID, [
+        { id: ELEMENT_ID, version: 1, changes: { x: 99 } },
+        { id: ELEMENT_ID_2, version: 1, changes: { x: 1 } },
+      ]);
+
+      // Каждый элемент — своя conditional-update-инструкция (Р2/Р3), не одна общая транзакция.
+      expect(patchAccessibleVersioned).toHaveBeenCalledTimes(2);
+      expect(result.applied).toEqual([createElementEntity({ x: 99, version: 2 })]);
+      expect(result.conflicts).toEqual([
+        {
+          id: ELEMENT_ID_2,
+          kind: 'version_conflict',
+          element: createElementEntity({ id: ELEMENT_ID_2, version: 7 }),
+        },
+      ]);
+    });
+
+    it('прочие поэлементные причины (not_found/forbidden/invalid_payload) — в той же корзине conflicts, без element', async () => {
+      const { elementService, getAccessLevel, patchAccessibleVersioned } = createDependencies();
+      getAccessLevel.mockImplementation((id) =>
+        Promise.resolve(id === ELEMENT_ID_2 ? 'viewer' : 'owner'),
+      );
+      patchAccessibleVersioned.mockResolvedValue(createElementEntity({ version: 2 }));
+
+      const result = await elementService.batchPatchVersioned(USER_ID, [
+        { id: ELEMENT_ID, version: 1, changes: { x: 1 } },
+        { id: ELEMENT_ID_2, version: 1, changes: { x: 1 } },
+      ]);
+
+      expect(result.applied).toHaveLength(1);
+      expect(result.conflicts).toEqual([{ id: ELEMENT_ID_2, kind: 'forbidden' }]);
+    });
+
+    it('все элементы применились — conflicts пуст', async () => {
+      const { elementService, patchAccessibleVersioned } = createDependencies();
+      patchAccessibleVersioned.mockResolvedValue(createElementEntity({ version: 2 }));
+
+      const result = await elementService.batchPatchVersioned(USER_ID, [
+        { id: ELEMENT_ID, version: 1, changes: { x: 1 } },
+        { id: ELEMENT_ID_2, version: 1, changes: { x: 2 } },
+      ]);
+
+      expect(result.applied).toHaveLength(2);
+      expect(result.conflicts).toEqual([]);
+    });
+  });
+
+  describe('batchRemoveVersioned (WS batch, SLT-68)', () => {
+    const ELEMENT_ID_2 = '019fa5b1-0000-7000-8000-000000000003';
+
+    it('поэлементный успех: конфликт одного не мешает удалению остальных', async () => {
+      const { elementService, softDeleteAccessibleVersioned, findAccessible } =
+        createDependencies();
+      softDeleteAccessibleVersioned.mockImplementation((id) =>
+        Promise.resolve(id === ELEMENT_ID ? { id, version: 2 } : null),
+      );
+      findAccessible.mockResolvedValue(createElementEntity({ id: ELEMENT_ID_2, version: 9 }));
+
+      const result = await elementService.batchRemoveVersioned(USER_ID, [
+        { id: ELEMENT_ID, version: 1 },
+        { id: ELEMENT_ID_2, version: 1 },
+      ]);
+
+      expect(result.applied).toEqual([{ id: ELEMENT_ID, version: 2 }]);
+      expect(result.conflicts).toEqual([
+        {
+          id: ELEMENT_ID_2,
+          kind: 'version_conflict',
+          element: createElementEntity({ id: ELEMENT_ID_2, version: 9 }),
+        },
+      ]);
+    });
+
+    it('forbidden на роль viewer попадает в conflicts, не останавливая батч', async () => {
+      const { elementService, getAccessLevel, softDeleteAccessibleVersioned } =
+        createDependencies();
+      getAccessLevel.mockImplementation((id) =>
+        Promise.resolve(id === ELEMENT_ID_2 ? 'viewer' : 'owner'),
+      );
+      softDeleteAccessibleVersioned.mockResolvedValue({ id: ELEMENT_ID, version: 2 });
+
+      const result = await elementService.batchRemoveVersioned(USER_ID, [
+        { id: ELEMENT_ID, version: 1 },
+        { id: ELEMENT_ID_2, version: 1 },
+      ]);
+
+      expect(result.applied).toEqual([{ id: ELEMENT_ID, version: 2 }]);
+      expect(result.conflicts).toEqual([{ id: ELEMENT_ID_2, kind: 'forbidden' }]);
+    });
+  });
 });

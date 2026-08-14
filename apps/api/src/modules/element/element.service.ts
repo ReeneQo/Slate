@@ -54,6 +54,35 @@ export type VersionedRemovalOutcome =
   | { status: 'version_conflict'; element: ElementEntity };
 
 /**
+ * Причина, по которой ОДИН элемент батч-мутации (SLT-68) не применился, БЕЗ `version_conflict` —
+ * та несёт актуальный элемент и разбирается отдельно (см. `BatchConflictEntry`). Подмножество
+ * статусов `VersionedPatchOutcome`/`VersionedRemovalOutcome`, кроме `applied`.
+ */
+export type BatchItemFailureKind = 'not_found' | 'forbidden' | 'invalid_payload';
+
+/**
+ * Запись конфликта в батче — ОДНА корзина на все причины отказа отдельного элемента (Р2,
+ * зафиксировано на точке сверки SLT-68), а не четыре отдельных списка: с точки зрения вызывающего
+ * (ElementSyncService) все они означают одно — «этот элемент не применился», `element` есть только
+ * у `version_conflict`, потому что только там его есть смысл прикладывать (LWW).
+ */
+export type BatchConflictEntry =
+  | { id: string; kind: 'version_conflict'; element: ElementEntity }
+  | { id: string; kind: BatchItemFailureKind };
+
+/** Исход батч-PATCH (`ElementService.batchPatchVersioned`, SLT-68). Поэлементный успех — не all-or-nothing. */
+export interface BatchPatchResult {
+  applied: ElementEntity[];
+  conflicts: BatchConflictEntry[];
+}
+
+/** Исход батч-DELETE (`ElementService.batchRemoveVersioned`, SLT-68). См. `BatchPatchResult`. */
+export interface BatchRemovalResult {
+  applied: { id: string; version: number }[];
+  conflicts: BatchConflictEntry[];
+}
+
+/**
  * Бизнес-логика элемента холста. PrismaService не инжектит и не импортирует — в БД ходит
  * только через ElementRepository. Про `deletedAt` тоже не знает: мягкое удаление целиком
  * закрыто слоем данных, здесь оно видно лишь как слово «воскресить» в названии сценария.
@@ -291,6 +320,81 @@ export class ElementService {
     return current === null
       ? { status: 'not_found' }
       : { status: 'version_conflict', element: current };
+  }
+
+  /**
+   * Батч-версия `patchVersioned` (WS `element_batch_update`, SLT-68) — переиспользует ЕЁ целиком,
+   * по одному вызову на элемент, а НЕ заводит вторую бизнес-логику рядом (роль, geometry-парсинг,
+   * conditional update — всё то же самое, что у одиночного PATCH).
+   *
+   * ПОЭЛЕМЕНТНЫЙ УСПЕХ, не `$transaction` (Р2/Р3, зафиксировано на точке сверки SLT-68):
+   * `Promise.all` НЕЗАВИСИМЫХ вызовов. Каждый элемент уже атомарен на уровне СВОЕЙ
+   * conditional-update-инструкции (`patchAccessibleVersioned` — одна SQL-инструкция
+   * `UPDATE...WHERE id=? AND version=?`, см. её докстринг в ElementRepository); элементы батча
+   * адресуются РАЗНЫМИ id — разными строками, гонок между ними нет и быть не может. Обернуть это в
+   * `prisma.$transaction` было бы неверно: транзакция в этом проекте (см. `OAuthService.loginOAuth`,
+   * единственный прецедент) значит «всё или ничего», а конфликт версии ОДНОГО элемента обязан
+   * применить/отклонить только его, не откатывая остальные N-1, — прямо противоположная гарантия.
+   */
+  async batchPatchVersioned(
+    userId: string,
+    items: { id: string; version: number; changes: PatchElementInput }[],
+  ): Promise<BatchPatchResult> {
+    const outcomes = await Promise.all(
+      items.map(async (item) => ({
+        id: item.id,
+        outcome: await this.patchVersioned(item.id, userId, item.changes, item.version),
+      })),
+    );
+
+    const applied: ElementEntity[] = [];
+    const conflicts: BatchConflictEntry[] = [];
+
+    for (const { id, outcome } of outcomes) {
+      switch (outcome.status) {
+        case 'applied':
+          applied.push(outcome.element);
+          break;
+        case 'version_conflict':
+          conflicts.push({ id, kind: 'version_conflict', element: outcome.element });
+          break;
+        default:
+          conflicts.push({ id, kind: outcome.status });
+      }
+    }
+
+    return { applied, conflicts };
+  }
+
+  /** Батч-версия `removeVersioned` (WS `element_batch_delete`, SLT-68). См. `batchPatchVersioned`. */
+  async batchRemoveVersioned(
+    userId: string,
+    items: { id: string; version: number }[],
+  ): Promise<BatchRemovalResult> {
+    const outcomes = await Promise.all(
+      items.map(async (item) => ({
+        id: item.id,
+        outcome: await this.removeVersioned(item.id, userId, item.version),
+      })),
+    );
+
+    const applied: { id: string; version: number }[] = [];
+    const conflicts: BatchConflictEntry[] = [];
+
+    for (const { id, outcome } of outcomes) {
+      switch (outcome.status) {
+        case 'applied':
+          applied.push({ id: outcome.id, version: outcome.version });
+          break;
+        case 'version_conflict':
+          conflicts.push({ id, kind: 'version_conflict', element: outcome.element });
+          break;
+        default:
+          conflicts.push({ id, kind: outcome.status });
+      }
+    }
+
+    return { applied, conflicts };
   }
 
   /**
