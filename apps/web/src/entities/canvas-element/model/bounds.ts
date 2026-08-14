@@ -98,3 +98,38 @@ export function getElementBounds(element: CanvasElement): Bounds {
 export function rectsIntersect(a: Bounds, b: Bounds): boolean {
   return !(a.maxX < b.minX || a.minX > b.maxX || a.maxY < b.minY || a.minY > b.maxY);
 }
+
+/**
+ * Отступ вокруг bbox всей доски при экспорте (SLT-66), в canvas-координатах: страхует от обрезки
+ * геометрии, вылезающей за axis-aligned bbox — strokeWidth на границе фигуры, наконечники arrow,
+ * tension у линий. Константа, не параметр — единый вид у всех экспортов.
+ */
+export const EXPORT_PADDING = 24;
+
+/**
+ * Bbox ВСЕЙ доски (SLT-66) — объединение getElementBounds по всем элементам + EXPORT_PADDING со
+ * всех сторон. Пустой документ → null (сигнал «нечего экспортировать» для вызывающего, не
+ * бросаем на пустом min/max).
+ */
+export function getDocumentBounds(elements: CanvasElement[]): Bounds | null {
+  if (elements.length === 0) return null;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const element of elements) {
+    const bounds = getElementBounds(element);
+    if (bounds.minX < minX) minX = bounds.minX;
+    if (bounds.minY < minY) minY = bounds.minY;
+    if (bounds.maxX > maxX) maxX = bounds.maxX;
+    if (bounds.maxY > maxY) maxY = bounds.maxY;
+  }
+
+  return {
+    minX: minX - EXPORT_PADDING,
+    minY: minY - EXPORT_PADDING,
+    maxX: maxX + EXPORT_PADDING,
+    maxY: maxY + EXPORT_PADDING,
+  };
+}

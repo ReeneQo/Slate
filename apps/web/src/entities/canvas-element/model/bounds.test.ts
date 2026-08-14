@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { getElementBounds, rectsIntersect } from './bounds';
+import { EXPORT_PADDING, getDocumentBounds, getElementBounds, rectsIntersect } from './bounds';
 import type {
   ArrowElement,
   EllipseElement,
@@ -195,5 +195,52 @@ describe('rectsIntersect', () => {
     const b = { minX: 40, minY: 40, maxX: 60, maxY: 60 };
     expect(rectsIntersect(a, b)).toBe(true);
     expect(rectsIntersect(b, a)).toBe(true);
+  });
+});
+
+describe('getDocumentBounds (SLT-66)', () => {
+  it('пустой документ → null (нечего экспортировать)', () => {
+    expect(getDocumentBounds([])).toBeNull();
+  });
+
+  it('один элемент — bbox = его собственный + EXPORT_PADDING со всех сторон', () => {
+    const rect: RectElement = {
+      ...base,
+      type: 'rect',
+      x: 10,
+      y: 20,
+      data: { width: 100, height: 50 },
+    };
+    expect(getDocumentBounds([rect])).toEqual({
+      minX: 10 - EXPORT_PADDING,
+      minY: 20 - EXPORT_PADDING,
+      maxX: 110 + EXPORT_PADDING,
+      maxY: 70 + EXPORT_PADDING,
+    });
+  });
+
+  it('несколько элементов — объединение (min по minX/minY, max по maxX/maxY), не последний элемент', () => {
+    const near: RectElement = {
+      ...base,
+      type: 'rect',
+      x: 0,
+      y: 0,
+      data: { width: 10, height: 10 },
+    };
+    // Далеко за пределами вьюпорта — объединение обязано его учесть (SLT-66: экспорт всей доски).
+    const far: RectElement = {
+      ...base,
+      type: 'rect',
+      x: 5000,
+      y: -3000,
+      data: { width: 20, height: 20 },
+    };
+    const bounds = getDocumentBounds([near, far]);
+    expect(bounds).toEqual({
+      minX: 0 - EXPORT_PADDING,
+      minY: -3000 - EXPORT_PADDING,
+      maxX: 5020 + EXPORT_PADDING,
+      maxY: 10 + EXPORT_PADDING,
+    });
   });
 });
