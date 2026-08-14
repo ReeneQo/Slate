@@ -17,6 +17,8 @@ import type {
   AppServer,
   AppSocket,
   BoardJoinResult,
+  ElementBatchDeleteAckResult,
+  ElementBatchUpdateAckResult,
   ElementCreateAckResult,
   ElementDeleteAckResult,
   ElementUpdateAckResult,
@@ -168,5 +170,23 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     @MessageBody() payload: unknown,
   ): Promise<ElementDeleteAckResult> {
     return this.elementSyncService.handleDelete(client, payload);
+  }
+
+  /** Батч-обновление (SLT-68) — та же чистая делегация, что у одиночных мутаций. */
+  @SubscribeMessage('element_batch_update')
+  handleElementBatchUpdate(
+    @ConnectedSocket() client: AppSocket,
+    @MessageBody() payload: unknown,
+  ): Promise<ElementBatchUpdateAckResult> {
+    return this.elementSyncService.handleBatchUpdate(client, payload);
+  }
+
+  /** Батч-удаление (SLT-68). */
+  @SubscribeMessage('element_batch_delete')
+  handleElementBatchDelete(
+    @ConnectedSocket() client: AppSocket,
+    @MessageBody() payload: unknown,
+  ): Promise<ElementBatchDeleteAckResult> {
+    return this.elementSyncService.handleBatchDelete(client, payload);
   }
 }

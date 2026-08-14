@@ -36,6 +36,12 @@ export type ElementPatch = Partial<
 export type DocumentChange =
   | { type: 'create'; element: CanvasElement }
   | { type: 'update'; id: string; patch: ElementPatch }
+  /**
+   * Батч-обновление (SLT-68) — накоплено окном `beginChangeBatch/endChangeBatch` за один групповой
+   * жест (group-drag/multi-resize): N вызовов `updateElement`, ОДНО семантическое изменение. Только
+   * update — симметрично `delete` (уже несёт массив), но БЕЗ `create` (batch_create не делаем).
+   */
+  | { type: 'batch_update'; updates: { id: string; patch: ElementPatch }[] }
   | { type: 'delete'; deletions: { id: string; version: number }[] };
 
 type DocumentChangeListener = (change: DocumentChange) => void;
@@ -84,6 +90,46 @@ let historyRecorder: DocumentHistoryRecorder | null = null;
 
 export function setHistoryRecorder(recorder: DocumentHistoryRecorder | null): void {
   historyRecorder = recorder;
+}
+
+/**
+ * Окно накопления WS-батча (SLT-68) — ОТДЕЛЬНЫЙ механизм от истории (beginTransaction/
+ * endTransaction, history.store.ts), НАМЕРЕННО не переиспользующий её напрямую (зафиксировано на
+ * точке сверки SLT-68, П3): undo()/redo() сами оборачивают применение инверсий в history-
+ * транзакцию, и внутри неё могут быть `restoreElements` (N create, инверсия группового удаления)
+ * или `deleteElements` (инверсия группового создания) — ни один из них не поддерживает батч-
+ * транспорт (только update/delete, без batch_create). Общее окно попыталось бы собрать эти
+ * create-события в несуществующий batch_update.
+ *
+ * Вызывающие (useGroupDrag/useTransform) поэтому открывают ОБА окна — историческое и это — в одних
+ * и тех же точках кода: синхронизация по факту вызова, а не по факту переиспользования функции.
+ * undo()/redo() это окно НЕ открывают вовсе — инверсии по-прежнему уезжают одиночным WS-путём.
+ */
+let updateBatchWindow: { id: string; patch: ElementPatch }[] | null = null;
+
+/** Открывает окно накопления батч-обновлений. Вложенность не ожидается — как у beginTransaction. */
+export function beginChangeBatch(): void {
+  if (updateBatchWindow) return;
+  updateBatchWindow = [];
+}
+
+/**
+ * Закрывает окно и эмитит накопленное ОДНИМ изменением: >1 патч → `batch_update` (один WS-emit на
+ * весь жест), ровно 1 → обычный одиночный `update` (single не переписываем на «батч из одного» —
+ * Р6, зафиксировано на точке сверки), 0 → реальных изменений не было (напр. resize без сдвига) —
+ * ничего не эмитим, как и `endTransaction` для истории.
+ */
+export function endChangeBatch(): void {
+  if (!updateBatchWindow) return;
+  const updates = updateBatchWindow;
+  updateBatchWindow = null;
+  if (updates.length === 0) return;
+  if (updates.length === 1) {
+    const only = updates[0]!;
+    emitChange({ type: 'update', id: only.id, patch: only.patch });
+    return;
+  }
+  emitChange({ type: 'batch_update', updates });
 }
 
 /**
@@ -148,6 +194,14 @@ interface DocumentActions {
   applyRemoteCreate: (element: CanvasElement) => void;
   applyRemoteUpdate: (element: CanvasElement) => void;
   applyRemoteDelete: (id: string) => void;
+  /**
+   * Batch-версии remote-actions (SLT-68) — партнёр получил `element_batch_updated`/
+   * `element_batch_deleted` и применяет его ОДНИМ проходом/ОДНИМ `set()`, не N отдельных вызовов
+   * applyRemoteUpdate/Delete в цикле (это дало бы N ререндеров вместо одного). Та же гарантия от
+   * autosave-петли, что и у одиночных remote-actions — emitChange здесь не зовётся.
+   */
+  applyRemoteBatchUpdate: (elements: CanvasElement[]) => void;
+  applyRemoteBatchDelete: (ids: string[]) => void;
 
   /**
    * Тихо синхронизирует `version` элемента из ack собственной WS-мутации (create/update, SLT-39)
@@ -225,7 +279,14 @@ export const useDocumentStore = create<DocumentStore>()(
       });
 
       if (applied) {
-        emitChange({ type: 'update', id, patch });
+        // Окно открыто (group-drag/multi-resize, SLT-68) — копим для одного batch-emit на
+        // endChangeBatch, а не эмитим сразу. История НЕ завязана на это ветвление: onUpdated
+        // зовётся безусловно, как и раньше.
+        if (updateBatchWindow) {
+          updateBatchWindow.push({ id, patch });
+        } else {
+          emitChange({ type: 'update', id, patch });
+        }
         if (before) historyRecorder?.onUpdated(id, snapshotPatchFields(before, patch));
       }
     },
@@ -316,6 +377,21 @@ export const useDocumentStore = create<DocumentStore>()(
         if (!(id in state.elements)) return;
         delete state.elements[id];
         state.elementIds = state.elementIds.filter((existingId) => existingId !== id);
+      }),
+
+    applyRemoteBatchUpdate: (elements) =>
+      set((state) => {
+        for (const element of elements) {
+          if (!(element.id in state.elements)) state.elementIds.push(element.id);
+          state.elements[element.id] = element;
+        }
+      }),
+
+    applyRemoteBatchDelete: (ids) =>
+      set((state) => {
+        const toDelete = new Set(ids);
+        for (const id of toDelete) delete state.elements[id];
+        state.elementIds = state.elementIds.filter((id) => !toDelete.has(id));
       }),
 
     syncElementVersion: (id, version) =>

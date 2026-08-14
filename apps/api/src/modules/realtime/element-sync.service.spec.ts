@@ -8,7 +8,7 @@ import {
 import type { ElementService } from '../element/element.service';
 import type { ElementEntity } from '../element/entities/element.entity';
 import { ElementSyncService } from './element-sync.service';
-import type { AppSocket } from './realtime.types';
+import { type AppSocket, MAX_BATCH_SIZE } from './realtime.types';
 
 /**
  * Юнит ElementSyncService изолирует ровно то, что решает сам сервис: авторизацию по членству в
@@ -83,23 +83,40 @@ function fakeSocket(rooms: string[] = [BOARD_ROOM]) {
   return { socket, to, toEmit };
 }
 
-/** Мок трёх методов ElementService, которыми пользуется ElementSyncService, и только их. */
+/** Мок методов ElementService, которыми пользуется ElementSyncService, и только их (SLT-38/68). */
 function createDependencies() {
   const upsertEntity = jest.fn() as jest.MockedFunction<ElementService['upsertEntity']>;
   const patchVersioned = jest.fn() as jest.MockedFunction<ElementService['patchVersioned']>;
   const removeVersioned = jest.fn() as jest.MockedFunction<ElementService['removeVersioned']>;
+  const batchPatchVersioned = jest.fn() as jest.MockedFunction<
+    ElementService['batchPatchVersioned']
+  >;
+  const batchRemoveVersioned = jest.fn() as jest.MockedFunction<
+    ElementService['batchRemoveVersioned']
+  >;
 
   const elementService = {
     upsertEntity,
     patchVersioned,
     removeVersioned,
-  } satisfies Pick<ElementService, 'upsertEntity' | 'patchVersioned' | 'removeVersioned'>;
+    batchPatchVersioned,
+    batchRemoveVersioned,
+  } satisfies Pick<
+    ElementService,
+    | 'upsertEntity'
+    | 'patchVersioned'
+    | 'removeVersioned'
+    | 'batchPatchVersioned'
+    | 'batchRemoveVersioned'
+  >;
 
   return {
     service: new ElementSyncService(elementService as unknown as ElementService),
     upsertEntity,
     patchVersioned,
     removeVersioned,
+    batchPatchVersioned,
+    batchRemoveVersioned,
   };
 }
 
@@ -487,5 +504,232 @@ describe('ElementSyncService', () => {
         expect(removeVersioned).not.toHaveBeenCalled();
       },
     );
+  });
+
+  describe('handleBatchUpdate (element_batch_update, SLT-68)', () => {
+    const ELEMENT_ID_2 = '019fa5b1-0000-7000-8000-000000000003';
+
+    it('поэлементный успех: применённые уходят в ОДНОМ broadcast, конфликтные — нет', async () => {
+      const { service, batchPatchVersioned } = createDependencies();
+      const { socket, to, toEmit } = fakeSocket();
+      batchPatchVersioned.mockResolvedValue({
+        applied: [createElementEntity({ x: 99, version: 2 })],
+        conflicts: [
+          {
+            id: ELEMENT_ID_2,
+            kind: 'version_conflict',
+            element: createElementEntity({ id: ELEMENT_ID_2, version: 7 }),
+          },
+        ],
+      });
+
+      const result = await service.handleBatchUpdate(socket, {
+        boardId: BOARD_ID,
+        items: [
+          { id: ELEMENT_ID, version: 1, changes: { x: 99 } },
+          { id: ELEMENT_ID_2, version: 1, changes: { x: 1 } },
+        ],
+      });
+
+      expect(batchPatchVersioned).toHaveBeenCalledWith(USER_ID, [
+        { id: ELEMENT_ID, version: 1, changes: { x: 99 } },
+        { id: ELEMENT_ID_2, version: 1, changes: { x: 1 } },
+      ]);
+      // ОДИН broadcast, не два — партнёр применяет пачку одним проходом.
+      expect(to).toHaveBeenCalledTimes(1);
+      expect(to).toHaveBeenCalledWith(BOARD_ROOM);
+      expect(toEmit).toHaveBeenCalledWith('element_batch_updated', {
+        elements: [expect.objectContaining({ id: ELEMENT_ID, version: 2 }) as unknown],
+        userId: USER_ID,
+      });
+      expect(result).toEqual({
+        ok: true,
+        applied: [expect.objectContaining({ id: ELEMENT_ID, version: 2 }) as unknown],
+        conflicts: [
+          {
+            id: ELEMENT_ID_2,
+            kind: 'version_conflict',
+            element: expect.objectContaining({ id: ELEMENT_ID_2, version: 7 }) as unknown,
+          },
+        ],
+      });
+    });
+
+    it('broadcast группируется по АВТОРИТЕТНОМУ boardId элемента, не по payload.boardId', async () => {
+      const OTHER_BOARD_ID = '019fa5b1-0000-7000-8000-0000000000ff';
+      const { service, batchPatchVersioned } = createDependencies();
+      const { socket, to, toEmit } = fakeSocket();
+      batchPatchVersioned.mockResolvedValue({
+        applied: [
+          createElementEntity({ id: ELEMENT_ID, boardId: BOARD_ID, version: 2 }),
+          createElementEntity({ id: ELEMENT_ID_2, boardId: OTHER_BOARD_ID, version: 2 }),
+        ],
+        conflicts: [],
+      });
+
+      await service.handleBatchUpdate(socket, {
+        boardId: BOARD_ID,
+        items: [
+          { id: ELEMENT_ID, version: 1, changes: { x: 1 } },
+          { id: ELEMENT_ID_2, version: 1, changes: { x: 1 } },
+        ],
+      });
+
+      expect(to).toHaveBeenCalledTimes(2);
+      expect(to).toHaveBeenCalledWith(BOARD_ROOM);
+      expect(to).toHaveBeenCalledWith(`board:${OTHER_BOARD_ID}`);
+      expect(toEmit).toHaveBeenCalledTimes(2);
+    });
+
+    it('все элементы конфликтуют — ack ok, но broadcast не летит вовсе', async () => {
+      const { service, batchPatchVersioned } = createDependencies();
+      const { socket, to } = fakeSocket();
+      batchPatchVersioned.mockResolvedValue({
+        applied: [],
+        conflicts: [{ id: ELEMENT_ID, kind: 'not_found' }],
+      });
+
+      const result = await service.handleBatchUpdate(socket, {
+        boardId: BOARD_ID,
+        items: [{ id: ELEMENT_ID, version: 1, changes: { x: 1 } }],
+      });
+
+      expect(to).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        ok: true,
+        applied: [],
+        conflicts: [{ id: ELEMENT_ID, kind: 'not_found' }],
+      });
+    });
+
+    it('отклоняет батч в доску, где сокет не в комнате — до похода в ElementService', async () => {
+      const { service, batchPatchVersioned } = createDependencies();
+      const { socket } = fakeSocket([]);
+
+      const result = await service.handleBatchUpdate(socket, {
+        boardId: BOARD_ID,
+        items: [{ id: ELEMENT_ID, version: 1, changes: { x: 1 } }],
+      });
+
+      expect(result).toEqual({ ok: false, reason: 'access_denied' });
+      expect(batchPatchVersioned).not.toHaveBeenCalled();
+    });
+
+    it('отклоняет пустой батч как invalid_payload, не сходив в ElementService', async () => {
+      const { service, batchPatchVersioned } = createDependencies();
+      const { socket } = fakeSocket();
+
+      const result = await service.handleBatchUpdate(socket, { boardId: BOARD_ID, items: [] });
+
+      expect(result).toEqual({ ok: false, reason: 'invalid_payload' });
+      expect(batchPatchVersioned).not.toHaveBeenCalled();
+    });
+
+    it('отклоняет батч сверх MAX_BATCH_SIZE как invalid_payload — серверный лимит, клиенту не доверяем (Р7)', async () => {
+      const { service, batchPatchVersioned } = createDependencies();
+      const { socket } = fakeSocket();
+      const items = Array.from({ length: MAX_BATCH_SIZE + 1 }, (_, index) => ({
+        id: `019fa5b1-0000-7000-9000-${String(index).padStart(12, '0')}`,
+        version: 1,
+        changes: { x: index },
+      }));
+
+      const result = await service.handleBatchUpdate(socket, { boardId: BOARD_ID, items });
+
+      expect(result).toEqual({ ok: false, reason: 'invalid_payload' });
+      expect(batchPatchVersioned).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handleBatchDelete (element_batch_delete, SLT-68)', () => {
+    const ELEMENT_ID_2 = '019fa5b1-0000-7000-8000-000000000003';
+
+    it('поэлементный успех: применённые уходят в ОДНОМ broadcast с id+version', async () => {
+      const { service, batchRemoveVersioned } = createDependencies();
+      const { socket, to, toEmit } = fakeSocket();
+      batchRemoveVersioned.mockResolvedValue({
+        applied: [{ id: ELEMENT_ID, version: 2 }],
+        conflicts: [
+          {
+            id: ELEMENT_ID_2,
+            kind: 'version_conflict',
+            element: createElementEntity({ id: ELEMENT_ID_2, version: 9 }),
+          },
+        ],
+      });
+
+      const result = await service.handleBatchDelete(socket, {
+        boardId: BOARD_ID,
+        items: [
+          { id: ELEMENT_ID, version: 1 },
+          { id: ELEMENT_ID_2, version: 1 },
+        ],
+      });
+
+      expect(batchRemoveVersioned).toHaveBeenCalledWith(USER_ID, [
+        { id: ELEMENT_ID, version: 1 },
+        { id: ELEMENT_ID_2, version: 1 },
+      ]);
+      expect(to).toHaveBeenCalledTimes(1);
+      expect(to).toHaveBeenCalledWith(BOARD_ROOM);
+      expect(toEmit).toHaveBeenCalledWith('element_batch_deleted', {
+        deletions: [{ id: ELEMENT_ID, version: 2 }],
+        userId: USER_ID,
+      });
+      expect(result).toEqual({
+        ok: true,
+        applied: [{ id: ELEMENT_ID, version: 2 }],
+        conflicts: [
+          {
+            id: ELEMENT_ID_2,
+            kind: 'version_conflict',
+            element: expect.objectContaining({ id: ELEMENT_ID_2, version: 9 }) as unknown,
+          },
+        ],
+      });
+    });
+
+    it('ничего не применилось — broadcast не летит', async () => {
+      const { service, batchRemoveVersioned } = createDependencies();
+      const { socket, to } = fakeSocket();
+      batchRemoveVersioned.mockResolvedValue({
+        applied: [],
+        conflicts: [{ id: ELEMENT_ID, kind: 'forbidden' }],
+      });
+
+      await service.handleBatchDelete(socket, {
+        boardId: BOARD_ID,
+        items: [{ id: ELEMENT_ID, version: 1 }],
+      });
+
+      expect(to).not.toHaveBeenCalled();
+    });
+
+    it('отклоняет батч в доску, где сокет не в комнате — до похода в ElementService', async () => {
+      const { service, batchRemoveVersioned } = createDependencies();
+      const { socket } = fakeSocket([]);
+
+      const result = await service.handleBatchDelete(socket, {
+        boardId: BOARD_ID,
+        items: [{ id: ELEMENT_ID, version: 1 }],
+      });
+
+      expect(result).toEqual({ ok: false, reason: 'access_denied' });
+      expect(batchRemoveVersioned).not.toHaveBeenCalled();
+    });
+
+    it('отклоняет батч сверх MAX_BATCH_SIZE как invalid_payload', async () => {
+      const { service, batchRemoveVersioned } = createDependencies();
+      const { socket } = fakeSocket();
+      const items = Array.from({ length: MAX_BATCH_SIZE + 1 }, (_, index) => ({
+        id: `019fa5b1-0000-7000-9000-${String(index).padStart(12, '0')}`,
+        version: 1,
+      }));
+
+      const result = await service.handleBatchDelete(socket, { boardId: BOARD_ID, items });
+
+      expect(result).toEqual({ ok: false, reason: 'invalid_payload' });
+      expect(batchRemoveVersioned).not.toHaveBeenCalled();
+    });
   });
 });

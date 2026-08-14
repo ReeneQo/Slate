@@ -7,10 +7,12 @@ export {
   rectsIntersect,
 } from './model/bounds';
 export {
+  beginChangeBatch,
   type DocumentChange,
   type DocumentHistoryRecorder,
   type DocumentStore,
   type ElementPatch,
+  endChangeBatch,
   setDocumentChangeListener,
   setHistoryRecorder,
   useDocumentStore,

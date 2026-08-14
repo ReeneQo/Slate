@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { type DocumentChange, setDocumentChangeListener, useDocumentStore } from './document.store';
+import {
+  beginChangeBatch,
+  type DocumentChange,
+  endChangeBatch,
+  setDocumentChangeListener,
+  useDocumentStore,
+} from './document.store';
 import { createDraft, updateDraftGeometry } from './element';
 import type { CanvasElement } from './types';
 
@@ -341,5 +347,117 @@ describe('useDocumentStore — syncElementVersion (SLT-39)', () => {
 
   it('syncElementVersion на несуществующий id — no-op, без исключения', () => {
     expect(() => useDocumentStore.getState().syncElementVersion('ghost', 1)).not.toThrow();
+  });
+});
+
+describe('useDocumentStore — окно WS-батча (SLT-68)', () => {
+  beforeEach(() => {
+    useDocumentStore.getState().reset();
+    endChangeBatch(); // страховка: не унести открытое окно из упавшего теста в следующий
+  });
+
+  afterEach(() => {
+    setDocumentChangeListener(null);
+    endChangeBatch();
+  });
+
+  it('>1 updateElement в открытом окне копится и уезжает ОДНИМ batch_update, не N update', () => {
+    const idA = commit();
+    const idB = commit();
+    const changes: DocumentChange[] = [];
+    setDocumentChangeListener((change) => changes.push(change));
+
+    beginChangeBatch();
+    useDocumentStore.getState().updateElement(idA, { x: 1 });
+    useDocumentStore.getState().updateElement(idB, { y: 2 });
+    // Внутри окна — тишина, ничего не эмитится до закрытия.
+    expect(changes).toHaveLength(0);
+    endChangeBatch();
+
+    expect(changes).toEqual([
+      {
+        type: 'batch_update',
+        updates: [
+          { id: idA, patch: { x: 1 } },
+          { id: idB, patch: { y: 2 } },
+        ],
+      },
+    ]);
+  });
+
+  it('ровно 1 updateElement в окне — падает обратно на одиночный update (Р6, не «батч из одного»)', () => {
+    const id = commit();
+    const changes: DocumentChange[] = [];
+    setDocumentChangeListener((change) => changes.push(change));
+
+    beginChangeBatch();
+    useDocumentStore.getState().updateElement(id, { x: 1 });
+    endChangeBatch();
+
+    expect(changes).toEqual([{ type: 'update', id, patch: { x: 1 } }]);
+  });
+
+  it('окно без единого реального изменения — ничего не эмитит (симметрично endTransaction)', () => {
+    const listener = vi.fn();
+    setDocumentChangeListener(listener);
+
+    beginChangeBatch();
+    useDocumentStore.getState().updateElement('ghost', { x: 1 }); // несуществующий id — не applied
+    endChangeBatch();
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('вне окна updateElement эмитит одиночный update как раньше (Р6: single цел)', () => {
+    const id = commit();
+    const changes: DocumentChange[] = [];
+    setDocumentChangeListener((change) => changes.push(change));
+
+    useDocumentStore.getState().updateElement(id, { x: 1 });
+
+    expect(changes).toEqual([{ type: 'update', id, patch: { x: 1 } }]);
+  });
+});
+
+describe('useDocumentStore — batch remote-actions (SLT-68)', () => {
+  beforeEach(() => {
+    useDocumentStore.getState().reset();
+  });
+
+  afterEach(() => {
+    setDocumentChangeListener(null);
+  });
+
+  it('applyRemoteBatchUpdate применяет пачку ОДНИМ set() и не уведомляет слушателя', () => {
+    useDocumentStore.getState().hydrate([serverRect('a', 0), serverRect('b', 1)]);
+    const listener = vi.fn();
+    setDocumentChangeListener(listener);
+
+    useDocumentStore
+      .getState()
+      .applyRemoteBatchUpdate([{ ...serverRect('a', 0, 1), x: 999 }, serverRect('c', 2)]);
+
+    const { elements, elementIds } = useDocumentStore.getState();
+    expect(elements.a?.x).toBe(999);
+    expect(elements.a?.version).toBe(1);
+    // Неизвестный id (c) — вставлен, как и у одиночного applyRemoteUpdate.
+    expect(elementIds).toContain('c');
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('applyRemoteBatchDelete убирает все id ОДНИМ проходом и не уведомляет', () => {
+    useDocumentStore
+      .getState()
+      .hydrate([serverRect('a', 0), serverRect('b', 1), serverRect('c', 2)]);
+    const listener = vi.fn();
+    setDocumentChangeListener(listener);
+
+    useDocumentStore.getState().applyRemoteBatchDelete(['a', 'b', 'ghost']);
+
+    const { elements, elementIds } = useDocumentStore.getState();
+    expect(elements.a).toBeUndefined();
+    expect(elements.b).toBeUndefined();
+    expect(elementIds).toEqual(['c']);
+    expect(listener).not.toHaveBeenCalled();
   });
 });

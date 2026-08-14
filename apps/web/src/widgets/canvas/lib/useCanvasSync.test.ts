@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setDocumentChangeListener, useDocumentStore } from '@/entities/canvas-element';
 import type {
   AppSocket,
+  ElementBatchDeleteAckResult,
+  ElementBatchUpdateAckResult,
   ElementCreateAckResult,
   ElementDeleteAckResult,
   ElementUpdateAckResult,
@@ -229,15 +231,53 @@ describe('sendMutation', () => {
     expect(useDocumentStore.getState().elements['el-1']).toEqual(serverElement);
   });
 
-  it('delete: хотя бы один reject в пачке — баннер (Promise.all семантика SLT-27)', async () => {
-    let call = 0;
-    const emit = vi.fn(
-      (_event: string, _payload: unknown, ack: (result: ElementDeleteAckResult) => void) => {
-        call += 1;
-        ack(call === 1 ? { ok: true, id: 'a', version: 1 } : { ok: false, reason: 'not_found' });
+  it('delete: >1 элемент — ОДИН element_batch_delete, а не N element_delete (SLT-68)', async () => {
+    const ackResult: ElementBatchDeleteAckResult = {
+      ok: true,
+      applied: [
+        { id: 'a', version: 1 },
+        { id: 'b', version: 1 },
+      ],
+      conflicts: [],
+    };
+    const { socket, emit } = fakeSocket(ackResult);
+    const setSaveError = vi.fn();
+
+    await sendMutation(
+      socket,
+      {
+        type: 'delete',
+        deletions: [
+          { id: 'a', version: 0 },
+          { id: 'b', version: 0 },
+        ],
       },
+      boardId,
+      setSaveError,
     );
-    const socket = { emit } as unknown as AppSocket;
+
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit).toHaveBeenCalledWith(
+      'element_batch_delete',
+      {
+        boardId,
+        items: [
+          { id: 'a', version: 0 },
+          { id: 'b', version: 0 },
+        ],
+      },
+      expect.any(Function),
+    );
+    expect(setSaveError).toHaveBeenCalledWith(null);
+  });
+
+  it('delete: хотя бы один conflict в батче — баннер, применённые элементы НЕ откатываются (поэлементный успех)', async () => {
+    const ackResult: ElementBatchDeleteAckResult = {
+      ok: true,
+      applied: [{ id: 'a', version: 1 }],
+      conflicts: [{ id: 'b', kind: 'not_found' }],
+    };
+    const { socket } = fakeSocket(ackResult);
     const setSaveError = vi.fn();
 
     await sendMutation(
@@ -256,22 +296,17 @@ describe('sendMutation', () => {
     expect(setSaveError).toHaveBeenCalledWith('network');
   });
 
-  it('delete: пачка с конфликтом И сетевым отказом — сводный баннер приоритизирует conflict (несёт действие)', async () => {
-    // deletions[0] ('a') получает эмит первым (map сохраняет порядок вызова emit синхронно) —
-    // network-отказ; deletions[1] ('b') — version_conflict с актуальным серверным элементом 'b'.
-    let call = 0;
+  it('delete: батч с конфликтом И not_found — сводный баннер приоритизирует conflict (несёт действие), возвращает серверный элемент в стор', async () => {
     const serverElement = rect('b', 7);
-    const emit = vi.fn(
-      (_event: string, _payload: unknown, ack: (result: ElementDeleteAckResult) => void) => {
-        call += 1;
-        ack(
-          call === 1
-            ? { ok: false, reason: 'not_found' }
-            : { ok: false, reason: 'version_conflict', element: serverElement },
-        );
-      },
-    );
-    const socket = { emit } as unknown as AppSocket;
+    const ackResult: ElementBatchDeleteAckResult = {
+      ok: true,
+      applied: [],
+      conflicts: [
+        { id: 'a', kind: 'not_found' },
+        { id: 'b', kind: 'version_conflict', element: serverElement },
+      ],
+    };
+    const { socket } = fakeSocket(ackResult);
     const setSaveError = vi.fn();
 
     await sendMutation(
@@ -291,20 +326,17 @@ describe('sendMutation', () => {
     expect(useDocumentStore.getState().elements.b).toEqual(serverElement);
   });
 
-  it('delete: пачка с forbidden И конфликтом — сводный баннер приоритизирует forbidden (объясняет остальное, SLT-43)', async () => {
-    let call = 0;
+  it('delete: батч с forbidden И конфликтом — сводный баннер приоритизирует forbidden (объясняет остальное, SLT-43)', async () => {
     const serverElement = rect('b', 7);
-    const emit = vi.fn(
-      (_event: string, _payload: unknown, ack: (result: ElementDeleteAckResult) => void) => {
-        call += 1;
-        ack(
-          call === 1
-            ? { ok: false, reason: 'version_conflict', element: serverElement }
-            : { ok: false, reason: 'forbidden' },
-        );
-      },
-    );
-    const socket = { emit } as unknown as AppSocket;
+    const ackResult: ElementBatchDeleteAckResult = {
+      ok: true,
+      applied: [],
+      conflicts: [
+        { id: 'b', kind: 'version_conflict', element: serverElement },
+        { id: 'c', kind: 'forbidden' },
+      ],
+    };
+    const { socket } = fakeSocket(ackResult);
     const setSaveError = vi.fn();
 
     await sendMutation(
@@ -321,5 +353,144 @@ describe('sendMutation', () => {
     );
 
     expect(setSaveError).toHaveBeenCalledWith('forbidden');
+  });
+
+  it('delete: батч-уровневый reject (access_denied/invalid_payload) — сетевой баннер, никакой стор не трогаем', async () => {
+    const ackResult: ElementBatchDeleteAckResult = { ok: false, reason: 'access_denied' };
+    const { socket } = fakeSocket(ackResult);
+    const setSaveError = vi.fn();
+
+    await sendMutation(
+      socket,
+      {
+        type: 'delete',
+        deletions: [
+          { id: 'a', version: 0 },
+          { id: 'b', version: 0 },
+        ],
+      },
+      boardId,
+      setSaveError,
+    );
+
+    expect(setSaveError).toHaveBeenCalledWith('network');
+  });
+});
+
+describe('sendMutation — batch_update (group-drag/multi-resize, SLT-68)', () => {
+  beforeEach(() => {
+    useDocumentStore.getState().reset();
+  });
+
+  afterEach(() => {
+    setDocumentChangeListener(null);
+  });
+
+  it('шлёт ОДИН element_batch_update с version каждого элемента из стора, гасит баннер на полном успехе', async () => {
+    useDocumentStore.getState().applyRemoteCreate(rect('a', 3));
+    useDocumentStore.getState().applyRemoteCreate(rect('b', 5));
+    const ackResult: ElementBatchUpdateAckResult = {
+      ok: true,
+      applied: [rect('a', 4), rect('b', 6)],
+      conflicts: [],
+    };
+    const { socket, emit } = fakeSocket(ackResult);
+    const setSaveError = vi.fn();
+
+    await sendMutation(
+      socket,
+      {
+        type: 'batch_update',
+        updates: [
+          { id: 'a', patch: { x: 1 } },
+          { id: 'b', patch: { y: 2 } },
+        ],
+      },
+      boardId,
+      setSaveError,
+    );
+
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit).toHaveBeenCalledWith(
+      'element_batch_update',
+      {
+        boardId,
+        items: [
+          { id: 'a', version: 3, changes: { x: 1 } },
+          { id: 'b', version: 5, changes: { y: 2 } },
+        ],
+      },
+      expect.any(Function),
+    );
+    expect(useDocumentStore.getState().elements.a?.version).toBe(4);
+    expect(useDocumentStore.getState().elements.b?.version).toBe(6);
+    expect(setSaveError).toHaveBeenCalledWith(null);
+  });
+
+  it('applied синхронизирует version каждого элемента, conflicts (version_conflict) применяет актуальный через remote-путь — конфликт одного не откатывает применённые', async () => {
+    useDocumentStore.getState().applyRemoteCreate(rect('a', 3));
+    useDocumentStore.getState().applyRemoteCreate(rect('b', 5));
+    const serverB = { ...rect('b', 9), x: 42 };
+    const ackResult: ElementBatchUpdateAckResult = {
+      ok: true,
+      applied: [rect('a', 4)],
+      conflicts: [{ id: 'b', kind: 'version_conflict', element: serverB }],
+    };
+    const { socket } = fakeSocket(ackResult);
+    const setSaveError = vi.fn();
+
+    await sendMutation(
+      socket,
+      {
+        type: 'batch_update',
+        updates: [
+          { id: 'a', patch: { x: 1 } },
+          { id: 'b', patch: { x: 999 } },
+        ],
+      },
+      boardId,
+      setSaveError,
+    );
+
+    expect(useDocumentStore.getState().elements.a?.version).toBe(4);
+    // Своя правка на 'b' отброшена — стор несёт серверную (LWW), как у одиночного version_conflict.
+    expect(useDocumentStore.getState().elements.b).toEqual(serverB);
+    expect(setSaveError).toHaveBeenCalledWith('conflict');
+  });
+
+  it('conflicts прочих причин (not_found/forbidden) — приоритизированный баннер, без element в сторе', async () => {
+    useDocumentStore.getState().applyRemoteCreate(rect('a', 3));
+    const ackResult: ElementBatchUpdateAckResult = {
+      ok: true,
+      applied: [],
+      conflicts: [{ id: 'a', kind: 'forbidden' }],
+    };
+    const { socket } = fakeSocket(ackResult);
+    const setSaveError = vi.fn();
+
+    await sendMutation(
+      socket,
+      { type: 'batch_update', updates: [{ id: 'a', patch: { x: 1 } }] },
+      boardId,
+      setSaveError,
+    );
+
+    expect(setSaveError).toHaveBeenCalledWith('forbidden');
+    expect(useDocumentStore.getState().elements.a?.version).toBe(3);
+  });
+
+  it('батч-уровневый reject (access_denied/invalid_payload) — сетевой баннер', async () => {
+    const ackResult: ElementBatchUpdateAckResult = { ok: false, reason: 'invalid_payload' };
+    const { socket } = fakeSocket(ackResult);
+    const setSaveError = vi.fn();
+
+    await sendMutation(
+      socket,
+      { type: 'batch_update', updates: [{ id: 'a', patch: { x: 1 } }] },
+      boardId,
+      setSaveError,
+    );
+
+    expect(setSaveError).toHaveBeenCalledWith('network');
   });
 });
