@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 
+import type { ToolType } from '@/entities/canvas-element';
 import { useDocumentStore, useHistoryStore } from '@/entities/canvas-element';
+import { TOOLS } from '@/features/toolbar';
 import { isEditableTarget } from '@/shared/lib/dom';
 
 import { useEditorStore } from '../model/editor.store';
@@ -37,6 +39,18 @@ export function matchesRedo(event: KeyboardEvent): boolean {
   );
 }
 
+/**
+ * Хоткей выбора инструмента (SLT-67): голая физическая клавиша из единой раскладки
+ * `TOOLS` (`@/features/toolbar`) — БЕЗ модификаторов, иначе перехватит системные комбо
+ * (Cmd/Ctrl+R — reload, будущий Ctrl+V — paste и т.п.). Возвращает `null`, если клавиша
+ * не из раскладки инструментов или зажат модификатор — как и матчеры выше, чистый и
+ * тестируемый без DOM.
+ */
+export function matchesToolHotkey(event: KeyboardEvent): ToolType | null {
+  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return null;
+  return TOOLS.find((descriptor) => descriptor.code === event.code)?.tool ?? null;
+}
+
 const rules: HotkeyRule[] = [
   {
     match: matchesDelete,
@@ -71,6 +85,14 @@ const rules: HotkeyRule[] = [
       useHistoryStore.getState().redo();
     },
   },
+  // Правила выбора инструмента (SLT-67) — генерируются из TOOLS, а не переписаны вручную по
+  // одному на клавишу: раскладка одна (`@/features/toolbar`), правила лишь проецируют её.
+  ...TOOLS.map(
+    ({ tool }): HotkeyRule => ({
+      match: (event) => matchesToolHotkey(event) === tool,
+      run: () => useEditorStore.getState().setTool(tool),
+    }),
+  ),
 ];
 
 /**
