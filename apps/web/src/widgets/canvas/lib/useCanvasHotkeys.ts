@@ -20,15 +20,21 @@ export function matchesDelete(event: KeyboardEvent): boolean {
   return (event.key === 'Delete' || event.key === 'Backspace') && !event.metaKey && !event.ctrlKey;
 }
 
-/** Undo — кроссплатформенно: Cmd (Mac) или Ctrl (Win/Linux) + Z, БЕЗ Shift. */
+/**
+ * Undo — кроссплатформенно: Cmd (Mac) или Ctrl (Win/Linux) + Z, БЕЗ Shift.
+ * Матчим по `event.code` (физическая клавиша), НЕ `event.key` (SLT-67) — так комбо работает
+ * независимо от раскладки (кириллица и т.д.), не только на латинице.
+ */
 export function matchesUndo(event: KeyboardEvent): boolean {
-  return (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z' && !event.shiftKey;
+  return (event.metaKey || event.ctrlKey) && event.code === 'KeyZ' && !event.shiftKey;
 }
 
-/** Redo — Cmd/Ctrl+Shift+Z (кроссплатформенно) ИЛИ Ctrl+Y (Windows-конвенция). */
+/** Redo — Cmd/Ctrl+Shift+Z (кроссплатформенно) ИЛИ Ctrl+Y (Windows-конвенция). См. matchesUndo про `code`. */
 export function matchesRedo(event: KeyboardEvent): boolean {
-  const key = event.key.toLowerCase();
-  return (event.metaKey || event.ctrlKey) && ((event.shiftKey && key === 'z') || key === 'y');
+  return (
+    (event.metaKey || event.ctrlKey) &&
+    ((event.shiftKey && event.code === 'KeyZ') || event.code === 'KeyY')
+  );
 }
 
 const rules: HotkeyRule[] = [
