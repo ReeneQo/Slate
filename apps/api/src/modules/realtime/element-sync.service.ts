@@ -8,14 +8,21 @@ import {
 } from '@nestjs/common';
 import { upsertElementSchema } from '@slate/shared-types';
 
-import { ElementService } from '../element/element.service';
+import { type BatchConflictEntry, ElementService } from '../element/element.service';
+import type { ElementEntity } from '../element/entities/element.entity';
 import {
   type AppSocket,
   boardRoom,
+  type ElementBatchConflictEntry,
+  type ElementBatchDeleteAckResult,
+  elementBatchDeletePayloadSchema,
+  type ElementBatchUpdateAckResult,
+  elementBatchUpdatePayloadSchema,
   type ElementCreateAckResult,
   type ElementDeleteAckResult,
   elementDeletePayloadSchema,
   type ElementMutationRejectReason,
+  type ElementSyncDto,
   type ElementUpdateAckResult,
   elementUpdatePayloadSchema,
   extractElementId,
@@ -184,6 +191,87 @@ export class ElementSyncService {
         return { ok: false, reason: 'forbidden' };
     }
   }
+
+  /**
+   * `element_batch_update` (SLT-68) — та же авторизация (комната ДО персиста) и тот же persist-путь
+   * (`ElementService.batchPatchVersioned`, переиспользует `patchVersioned` поэлементно), но ОДИН
+   * ack и ОДИН broadcast на весь батч, а не N (Р2/Р4, зафиксировано на точке сверки).
+   *
+   * BROADCAST — группировка по АВТОРИТЕТНОМУ `element.boardId` из персист-слоя (как у одиночного
+   * `handleUpdate`), а НЕ по `payload.boardId`: в честном случае батч гомогенен одной доске и
+   * группа ровно одна, но полагаться на слово клиента для адреса broadcast — та же ошибка, которую
+   * одиночный путь уже не совершает (см. её докстринг класса). Конфликтные элементы НЕ
+   * транслируются — у партнёров и так актуальное состояние (иначе конфликта не было бы).
+   */
+  async handleBatchUpdate(
+    socket: AppSocket,
+    payload: unknown,
+  ): Promise<ElementBatchUpdateAckResult> {
+    const parsed = elementBatchUpdatePayloadSchema.safeParse(payload);
+
+    if (!parsed.success) {
+      return { ok: false, reason: 'invalid_payload' };
+    }
+
+    const { boardId, items } = parsed.data;
+
+    if (!isInBoardRoom(socket, boardId)) {
+      this.logger.debug(`element_batch_update denied: user=${socket.data.userId} board=${boardId}`);
+      return { ok: false, reason: 'access_denied' };
+    }
+
+    const { applied, conflicts } = await this.elementService.batchPatchVersioned(
+      socket.data.userId,
+      items,
+    );
+
+    for (const [room, elements] of groupByBoardRoom(applied)) {
+      socket.to(room).emit('element_batch_updated', { elements, userId: socket.data.userId });
+    }
+
+    return {
+      ok: true,
+      applied: applied.map(toElementSyncDto),
+      conflicts: toBatchConflictEntries(conflicts),
+    };
+  }
+
+  /**
+   * `element_batch_delete` (SLT-68). Broadcast — по `boardId` из payload'а, СИММЕТРИЧНО одиночному
+   * `handleDelete`: `softDeleteAccessibleVersioned` не возвращает `boardId` (см. её select) —
+   * авторитетного адреса у удалённого элемента взять неоткуда, тот же приём, что уже принят в
+   * одиночном пути (см. её докстринг класса).
+   */
+  async handleBatchDelete(
+    socket: AppSocket,
+    payload: unknown,
+  ): Promise<ElementBatchDeleteAckResult> {
+    const parsed = elementBatchDeletePayloadSchema.safeParse(payload);
+
+    if (!parsed.success) {
+      return { ok: false, reason: 'invalid_payload' };
+    }
+
+    const { boardId, items } = parsed.data;
+
+    if (!isInBoardRoom(socket, boardId)) {
+      this.logger.debug(`element_batch_delete denied: user=${socket.data.userId} board=${boardId}`);
+      return { ok: false, reason: 'access_denied' };
+    }
+
+    const { applied, conflicts } = await this.elementService.batchRemoveVersioned(
+      socket.data.userId,
+      items,
+    );
+
+    if (applied.length > 0) {
+      socket
+        .to(boardRoom(boardId))
+        .emit('element_batch_deleted', { deletions: applied, userId: socket.data.userId });
+    }
+
+    return { ok: true, applied, conflicts: toBatchConflictEntries(conflicts) };
+  }
 }
 
 /**
@@ -216,4 +304,37 @@ function mapUpsertRejectReason(
   }
 
   throw error;
+}
+
+/**
+ * Группирует применённые элементы батча по АВТОРИТЕТНОЙ комнате их доски (см. `handleBatchUpdate`).
+ * Map, а не единственная комната из payload'а: гомогенный по замыслу батч (Р1) не обязан быть
+ * гомогенным по факту, если клиенту нельзя доверять на слово, — честный случай даёт ровно одну
+ * группу, адверсариальный получает корректный (не протекающий в чужую комнату) результат бесплатно.
+ */
+function groupByBoardRoom(elements: ElementEntity[]): Map<string, ElementSyncDto[]> {
+  const groups = new Map<string, ElementSyncDto[]>();
+
+  for (const element of elements) {
+    const room = boardRoom(element.boardId);
+    const dto = toElementSyncDto(element);
+    const group = groups.get(room);
+
+    if (group) {
+      group.push(dto);
+    } else {
+      groups.set(room, [dto]);
+    }
+  }
+
+  return groups;
+}
+
+/** `BatchConflictEntry` (домен ElementService) → `ElementBatchConflictEntry` (WS-контракт ack'а). */
+function toBatchConflictEntries(conflicts: BatchConflictEntry[]): ElementBatchConflictEntry[] {
+  return conflicts.map((conflict) =>
+    conflict.kind === 'version_conflict'
+      ? { id: conflict.id, kind: 'version_conflict', element: toElementSyncDto(conflict.element) }
+      : conflict,
+  );
 }
